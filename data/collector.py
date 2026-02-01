@@ -1,10 +1,13 @@
 """Raw data ingestion from Binance (REST klines). Output: raw OHLCV; no indicator logic."""
 
+import logging
 from typing import Any, List, Optional
 
 import requests
 
 from config import settings
+
+logger = logging.getLogger(__name__)
 
 BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
 BINANCE_TESTNET_KLINES_URL = "https://testnet.binance.vision/api/v3/klines"
@@ -42,19 +45,36 @@ class Collector:
             params["startTime"] = start_time
         if end_time is not None:
             params["endTime"] = end_time
-        resp = requests.get(self._base, params=params, timeout=30)
-        resp.raise_for_status()
-        raw = resp.json()
-        # Binance kline: [open_time, open, high, low, close, volume, close_time, ...]
-        return [
-            (
-                int(c[0]),
-                float(c[1]),
-                float(c[2]),
-                float(c[3]),
-                float(c[4]),
-                float(c[5]),
-                int(c[6]),
+        try:
+            resp = requests.get(self._base, params=params, timeout=30)
+            resp.raise_for_status()
+            raw = resp.json()
+            # Binance kline: [open_time, open, high, low, close, volume, close_time, ...]
+            rows = [
+                (
+                    int(c[0]),
+                    float(c[1]),
+                    float(c[2]),
+                    float(c[3]),
+                    float(c[4]),
+                    float(c[5]),
+                    int(c[6]),
+                )
+                for c in raw
+            ]
+            logger.debug(
+                "fetch_klines %s %s: %s rows",
+                symbol,
+                interval,
+                len(rows),
             )
-            for c in raw
-        ]
+            return rows
+        except Exception as e:
+            logger.warning(
+                "fetch_klines failed %s %s: %s",
+                symbol,
+                interval,
+                e,
+                exc_info=True,
+            )
+            raise

@@ -1,7 +1,10 @@
 """Klines collector: queue + writer task; stream tasks added later."""
 
 import asyncio
+import logging
 from typing import Any, Optional, Sequence, Tuple
+
+logger = logging.getLogger(__name__)
 
 # Kline item: (symbol, timeframe, candle_tuple)
 # candle_tuple: (open_time, open, high, low, close, volume, close_time)
@@ -31,6 +34,7 @@ class KlinesCollector:
     async def _writer_task(self, stop_event: asyncio.Event) -> None:
         """Async writer: get from queue, run sync write in executor."""
         loop = asyncio.get_event_loop()
+        logger.info("klines writer task started")
         while not stop_event.is_set():
             try:
                 item = await asyncio.wait_for(self._queue.get(), timeout=1.0)
@@ -39,16 +43,27 @@ class KlinesCollector:
             if item is None:
                 break
             symbol, timeframe, row = item
-            await loop.run_in_executor(
-                None,
-                lambda s=symbol, t=timeframe, r=row: self._storage.write_ohlcv(s, t, [r]),
-            )
+            try:
+                await loop.run_in_executor(
+                    None,
+                    lambda s=symbol, t=timeframe, r=row: self._storage.write_ohlcv(s, t, [r]),
+                )
+            except Exception as e:
+                logger.error(
+                    "klines writer failed symbol=%s timeframe=%s: %s",
+                    symbol,
+                    timeframe,
+                    e,
+                    exc_info=True,
+                )
+        logger.info("klines writer task stopped")
 
     async def run(self, stop_event: asyncio.Event) -> None:
         """
         Start writer task (and later stream tasks); run until stop_event is set.
         No collection operations yet – stream tasks will push into self._queue later.
         """
+        logger.debug("KlinesCollector run starting")
         writer = asyncio.create_task(self._writer_task(stop_event))
         # Stream tasks will be added here; they will push (symbol, timeframe, candle_tuple) into self._queue.
         await stop_event.wait()

@@ -1,10 +1,13 @@
 """Persist and query raw OHLCV data; schema and access patterns for raw series only."""
 
+import logging
 from pathlib import Path
 from typing import List, Optional, Sequence
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
+
+logger = logging.getLogger(__name__)
 
 # In-memory schema: raw OHLCV candles
 OHLCV_SCHEMA = """
@@ -69,6 +72,16 @@ class Storage:
                 ],
             )
             conn.commit()
+        except Exception as e:
+            logger.error(
+                "write_ohlcv failed symbol=%s timeframe=%s rows=%s: %s",
+                symbol,
+                timeframe,
+                len(rows),
+                e,
+                exc_info=True,
+            )
+            raise
         finally:
             conn.close()
 
