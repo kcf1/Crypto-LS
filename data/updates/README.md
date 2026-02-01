@@ -2,7 +2,7 @@
 
 General entry point: **`scripts/run_data_updater.py`** (e.g. Docker `data-updater` service). It runs all registered tasks at a fixed interval.
 
-**One subprocess/task per data source.** Each task module exposes a `run()` function; the wrapper invokes them in order and catches exceptions per task.
+**One task per data source.** Tasks run **simultaneously** (one thread each) so one source does not block another. Each task module exposes a `run()` function; the wrapper catches exceptions per task so one failure does not stop others.
 
 ## Implemented
 
