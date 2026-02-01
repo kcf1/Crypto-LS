@@ -53,7 +53,7 @@ class Settings:
     ohlcv_limit_per_request: int = 1000
 
     # Feature flags
-    use_testnet: bool = True
+    use_testnet: bool = False
 
 
 settings = Settings()
