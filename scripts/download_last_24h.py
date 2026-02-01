@@ -1,5 +1,5 @@
 """
-Test script: download last 24 hours of OHLCV for all configured symbols and timeframes.
+Test script: download last 24 hours of OHLCV for the first 10 symbols and configured timeframes.
 Uses data.Collector (REST) and data.Storage; writes to settings.db_path (SQLite) by default.
 Run from project root: python scripts/download_last_24h.py
 """
@@ -27,7 +27,8 @@ def main() -> None:
     collector = Collector(use_testnet=settings.use_testnet)
     storage = Storage(db_path=settings.db_path)
 
-    symbols = settings.symbols
+    # Only settings: first 10 symbols, configured timeframes and db
+    symbols = settings.symbols[:10]
     timeframes = settings.timeframes
     total = len(symbols) * len(timeframes)
     ok = 0
