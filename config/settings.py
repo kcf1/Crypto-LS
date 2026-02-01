@@ -29,6 +29,8 @@ class Settings:
     # App
     env: str = "development"
     log_level: str = "INFO"
+    log_dir: str = "logs"
+    log_file: str = "app.log"
 
     # Trading
     default_symbol: str = "BTCUSDT"

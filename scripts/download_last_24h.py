@@ -4,19 +4,23 @@ Uses data.Collector (REST) and data.Storage; writes to settings.db_path (SQLite)
 Run from project root: python scripts/download_last_24h.py
 """
 
+import logging
+import sys
 import time
 from pathlib import Path
 
 # Run from project root so config and data are importable
-import sys
 if str(Path(__file__).resolve().parent.parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from config import settings
+from config import settings, setup_logging
 from data import Collector, Storage
+
+logger = logging.getLogger(__name__)
 
 
 def main() -> None:
+    setup_logging()
     end_time_ms = int(time.time() * 1000)
     start_time_ms = end_time_ms - 24 * 3600 * 1000
 
@@ -45,13 +49,18 @@ def main() -> None:
                 failed.append((symbol, timeframe, str(e)))
             time.sleep(0.05)
 
-    print(f"Downloaded last 24h: {ok}/{total} symbol/timeframe pairs written to {settings.db_path}")
+    logger.info(
+        "Downloaded last 24h: %s/%s symbol/timeframe pairs written to %s",
+        ok,
+        total,
+        settings.db_path,
+    )
     if failed:
-        print(f"Failed ({len(failed)}):")
+        logger.warning("Failed (%s):", len(failed))
         for s, t, err in failed[:10]:
-            print(f"  {s} {t}: {err}")
+            logger.warning("  %s %s: %s", s, t, err)
         if len(failed) > 10:
-            print(f"  ... and {len(failed) - 10} more")
+            logger.warning("  ... and %s more", len(failed) - 10)
 
 
 if __name__ == "__main__":
