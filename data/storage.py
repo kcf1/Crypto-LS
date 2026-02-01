@@ -117,6 +117,22 @@ class Storage:
                 )
                 raise
 
+    def get_latest_open_time(self, symbol: str, timeframe: str) -> Optional[int]:
+        """Return the latest (max) open_time for the given symbol/timeframe, or None if no rows."""
+        sql = """
+            SELECT MAX(open_time) FROM ohlcv
+            WHERE symbol = :symbol AND timeframe = :timeframe
+        """
+        with self._engine.connect() as conn:
+            result = conn.execute(
+                text(sql),
+                {"symbol": symbol, "timeframe": timeframe},
+            )
+            row = result.fetchone()
+        if row is None or row[0] is None:
+            return None
+        return int(row[0])
+
     def read_ohlcv(
         self,
         symbol: str,
