@@ -1,0 +1,16 @@
+# Data updater service: runs run_data_updater at fixed interval.
+# Build: docker build -f Dockerfile.updater -t crypto-ls-updater .
+# Or use docker-compose: service data-updater builds this.
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY config config
+COPY data data
+COPY scripts scripts
+
+CMD ["python", "scripts/run_data_updater.py"]

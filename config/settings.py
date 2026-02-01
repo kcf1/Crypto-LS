@@ -51,6 +51,9 @@ class Settings:
         default_factory=lambda: os.environ.get("DATABASE_URL", "").strip()
     )
     ohlcv_limit_per_request: int = 1000
+    updater_interval_sec: int = field(
+        default_factory=lambda: int(os.environ.get("UPDATER_INTERVAL_SEC", "300"))
+    )
 
     # Feature flags
     use_testnet: bool = False

@@ -1,32 +1,25 @@
 """
-Incremental OHLCV update with tail refresh.
+Binance OHLCV incremental update task.
 
-Fetches new bars after the last stored bar and re-fetches the last N bars (tail refresh)
-so real-time corrections from the API overwrite existing rows. Uses storage.write_ohlcv
-(upsert). Intended to be run as a subprocess by the dataupdater process.
-
-Run from project root: python -m data.updater.incremental
+One subprocess per data source; this is the Binance OHLCV source. Fetches new
+bars after the last stored bar and re-fetches the last N bars (tail refresh)
+so real-time corrections from the API overwrite existing rows. Uses Collector +
+Storage + settings (delay, 429 retry). Registered in data.updates; the general
+entry point (run_data_updater.py) invokes run() at fixed interval.
 """
 
 import logging
 import re
-import sys
 import time
-from pathlib import Path
 from typing import List, Optional
 
 import requests
 
-# Run from project root so config and data are importable
-if str(Path(__file__).resolve().parent.parent.parent) not in sys.path:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-
-from config import settings, setup_logging
+from config import settings
 from data import Collector, Storage
 
 logger = logging.getLogger(__name__)
 
-# Tail refresh: number of existing bars to re-fetch and overwrite
 TAIL_BARS = 3
 DELAY_SEC = 0.1
 MAX_429_RETRIES = 5
@@ -42,11 +35,10 @@ for d in [1, 3]:
 _INTERVAL_MS["1w"] = 7 * 86400 * 1000
 
 
-def interval_to_ms(interval: str) -> int:
+def _interval_to_ms(interval: str) -> int:
     """Return interval duration in milliseconds (e.g. '5m' -> 300_000)."""
     if interval in _INTERVAL_MS:
         return _INTERVAL_MS[interval]
-    # Fallback: parse "5m", "1h", "1d"
     m = re.match(r"^(\d+)([mhd])$", interval.lower())
     if m:
         n, unit = int(m.group(1)), m.group(2)
@@ -59,7 +51,7 @@ def interval_to_ms(interval: str) -> int:
     raise ValueError(f"Unsupported interval: {interval!r}")
 
 
-def fetch_klines_with_retry(
+def _fetch_klines_with_retry(
     collector: Collector,
     symbol: str,
     interval: str,
@@ -68,7 +60,7 @@ def fetch_klines_with_retry(
     end_time: Optional[int] = None,
     limit: int,
 ) -> List[tuple]:
-    """Call collector.fetch_klines; on 429, sleep Retry-After and retry up to MAX_429_RETRIES."""
+    """Call collector.fetch_klines; on 429, sleep Retry-After and retry."""
     for attempt in range(MAX_429_RETRIES):
         try:
             return collector.fetch_klines(
@@ -90,35 +82,22 @@ def fetch_klines_with_retry(
     return []
 
 
-def run_incremental_update(
-    symbols: Optional[List[str]] = None,
-    timeframe: str = "5m",
-    tail_bars: int = TAIL_BARS,
-    collector: Optional[Collector] = None,
-    storage: Optional[Storage] = None,
-) -> int:
-    """
-    Run one pass of incremental update with tail refresh for each symbol.
-
-    For each symbol: get latest stored open_time; if none, skip. Else start_time_ms
-    = max(0, latest - (tail_bars - 1) * interval_ms); fetch klines; write via
-    storage.write_ohlcv (upsert). Returns total rows written.
-    """
-    symbols = symbols or settings.symbols
-    collector = collector or Collector(use_testnet=settings.use_testnet)
-    storage = storage or Storage()
-    interval_ms = interval_to_ms(timeframe)
+def run() -> None:
+    """One-shot Binance OHLCV incremental update (tail refresh + new bars)."""
+    collector = Collector(use_testnet=settings.use_testnet)
+    storage = Storage()
+    timeframe = settings.default_timeframe
+    interval_ms = _interval_to_ms(timeframe)
     limit = settings.ohlcv_limit_per_request
-    total_written = 0
 
-    for symbol in symbols:
+    for symbol in settings.symbols:
         latest = storage.get_latest_open_time(symbol, timeframe)
         if latest is None:
             logger.debug("Skip %s %s: no stored data", symbol, timeframe)
             continue
-        start_time_ms = max(0, latest - (tail_bars - 1) * interval_ms)
+        start_time_ms = max(0, latest - (TAIL_BARS - 1) * interval_ms)
         try:
-            rows = fetch_klines_with_retry(
+            rows = _fetch_klines_with_retry(
                 collector,
                 symbol,
                 timeframe,
@@ -128,22 +107,7 @@ def run_incremental_update(
             if not rows:
                 continue
             storage.write_ohlcv(symbol, timeframe, rows)
-            total_written += len(rows)
             logger.info("%s %s: wrote %s rows (tail refresh + new)", symbol, timeframe, len(rows))
         except Exception as e:
             logger.warning("%s %s incremental update failed: %s", symbol, timeframe, e)
         time.sleep(DELAY_SEC)
-
-    return total_written
-
-
-def main() -> None:
-    """Entrypoint for subprocess: one incremental pass then exit."""
-    setup_logging()
-    timeframe = getattr(settings, "default_timeframe", "5m")
-    run_incremental_update(timeframe=timeframe)
-    sys.exit(0)
-
-
-if __name__ == "__main__":
-    main()

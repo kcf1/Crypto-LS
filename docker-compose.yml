@@ -27,5 +27,18 @@ services:
     depends_on:
       - postgres
 
+  data-updater:
+    build:
+      context: .
+      dockerfile: Dockerfile.updater
+    container_name: crypto-ls-data-updater
+    environment:
+      DATABASE_URL: postgresql://crypto:crypto@postgres:5432/cryptols
+      UPDATER_INTERVAL_SEC: "300"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   postgres_data:
