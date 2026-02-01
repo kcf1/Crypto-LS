@@ -17,8 +17,10 @@ pip install -r requirements.txt
 From **project root**:
 
 ```bash
-streamlit run viz/app.py
+python -m streamlit run viz/app.py
 ```
+
+(Use `python -m streamlit` so the correct Python with streamlit installed is used; `streamlit` may not be on PATH.)
 
 Browser opens at `http://localhost:8501`. Use the sidebar to pick **Symbol** and **Timeframe** (from `config.settings`). Candlestick + volume chart and a raw-data expander are shown.
 

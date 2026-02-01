@@ -22,6 +22,7 @@ st.set_page_config(
 st.title("Crypto-LS Viz")
 st.markdown(
     "Use the **sidebar** to open pages:\n"
-    "- **Check OHLC data** — plot downloaded OHLC + volume (symbol/timeframe selectors)."
+    "- **Check OHLC data** — plot downloaded OHLC + volume (symbol/timeframe selectors).\n"
+    "- **Eod bar** — plot EOD close derived from 5m data (last 5m close per day)."
 )
 st.caption("Data from Storage (DATABASE_URL when set, else SQLite). Extensible for backtesting later.")
