@@ -1,6 +1,6 @@
 """
 Test script: verify expected result after download_last_24h.py has run.
-Uses only settings: first 10 symbols, configured timeframes, db_path.
+Uses only settings: first 10 symbols, configured timeframes; storage uses DATABASE_URL (Postgres) when set, else SQLite.
 Checks that storage has OHLCV data with row counts in expected range for 24h.
 Run from project root: python scripts/test_after_download.py
 """
@@ -41,7 +41,7 @@ def _expected_rows_24h(interval: str) -> tuple[int, int]:
 
 
 def main() -> int:
-    storage = Storage(db_path=settings.db_path)
+    storage = Storage()
     symbols = settings.symbols[:10]
     timeframes = settings.timeframes
     errors = []

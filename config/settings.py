@@ -1,7 +1,14 @@
 """App and trading parameters, timeframes, symbols, feature flags."""
 
+import os
+from pathlib import Path
+
 from dataclasses import dataclass, field
-from typing import List
+from dotenv import load_dotenv
+from typing import List, Optional
+
+# Load .env so DATABASE_URL is available
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 # Top 100 Binance USDT pairs by typical 24h volume / market cap (for market data collection)
 _TOP_100_RAW: List[str] = [
@@ -40,6 +47,9 @@ class Settings:
 
     # Data
     db_path: str = "data.db"
+    database_url: Optional[str] = field(
+        default_factory=lambda: os.environ.get("DATABASE_URL", "").strip()
+    )
     ohlcv_limit_per_request: int = 1000
 
     # Feature flags

@@ -7,9 +7,11 @@ from typing import List, Optional, Sequence
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
+from config import settings
+
 logger = logging.getLogger(__name__)
 
-# In-memory schema: raw OHLCV candles
+# In-memory schema for SQLite only (Postgres schema is managed by Alembic)
 OHLCV_SCHEMA = """
 CREATE TABLE IF NOT EXISTS ohlcv (
     symbol TEXT NOT NULL,
@@ -26,16 +28,45 @@ CREATE TABLE IF NOT EXISTS ohlcv (
 CREATE INDEX IF NOT EXISTS ix_ohlcv_symbol_timeframe ON ohlcv (symbol, timeframe);
 """
 
+# INSERT with ON CONFLICT (works on SQLite 3.24+ and PostgreSQL)
+OHLCV_UPSERT_SQL = """
+INSERT INTO ohlcv (symbol, timeframe, open_time, open, high, low, close, volume, close_time)
+VALUES (:symbol, :timeframe, :open_time, :open, :high, :low, :close, :volume, :close_time)
+ON CONFLICT (symbol, timeframe, open_time) DO UPDATE SET
+  open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low,
+  close = EXCLUDED.close, volume = EXCLUDED.volume, close_time = EXCLUDED.close_time
+"""
+
+
+def _engine_url(db_path: Optional[str] = None, database_url: Optional[str] = None) -> str:
+    """Resolve engine URL: DATABASE_URL if set, else SQLite at db_path."""
+    if database_url:
+        return database_url
+    url = settings.database_url
+    if url:
+        return url
+    path = Path(db_path or settings.db_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return f"sqlite:///{path.resolve()}"
+
+
+def _is_postgres(url: str) -> bool:
+    return url.strip().startswith("postgresql") or url.strip().startswith("postgres+")
+
 
 class Storage:
-    """Persist and query raw OHLCV. Uses SQLite by default; configurable via engine."""
+    """Persist and query raw OHLCV. Uses DATABASE_URL (Postgres) when set, else SQLite at db_path."""
 
-    def __init__(self, db_path: str = "data.db") -> None:
-        path = Path(db_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._engine = create_engine(f"sqlite:///{path}", echo=False)
+    def __init__(
+        self,
+        db_path: Optional[str] = None,
+        database_url: Optional[str] = None,
+    ) -> None:
+        url = _engine_url(db_path=db_path, database_url=database_url)
+        self._engine = create_engine(url, echo=False)
         self._session_factory = sessionmaker(self._engine, expire_on_commit=False)
-        self._init_schema()
+        if not _is_postgres(url):
+            self._init_schema()
 
     def _init_schema(self) -> None:
         with self._engine.connect() as conn:
@@ -57,33 +88,34 @@ class Storage:
         """Write raw OHLCV rows. Each row: (open_time, open, high, low, close, volume, close_time)."""
         if not rows:
             return
-        conn = self._engine.raw_connection()
-        try:
-            cur = conn.cursor()
-            cur.executemany(
-                """
-                INSERT OR REPLACE INTO ohlcv
-                (symbol, timeframe, open_time, open, high, low, close, volume, close_time)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    (symbol, timeframe, r[0], r[1], r[2], r[3], r[4], r[5], r[6])
-                    for r in rows
-                ],
-            )
-            conn.commit()
-        except Exception as e:
-            logger.error(
-                "write_ohlcv failed symbol=%s timeframe=%s rows=%s: %s",
-                symbol,
-                timeframe,
-                len(rows),
-                e,
-                exc_info=True,
-            )
-            raise
-        finally:
-            conn.close()
+        with self._engine.connect() as conn:
+            try:
+                for r in rows:
+                    conn.execute(
+                        text(OHLCV_UPSERT_SQL),
+                        {
+                            "symbol": symbol,
+                            "timeframe": timeframe,
+                            "open_time": r[0],
+                            "open": r[1],
+                            "high": r[2],
+                            "low": r[3],
+                            "close": r[4],
+                            "volume": r[5],
+                            "close_time": r[6],
+                        },
+                    )
+                conn.commit()
+            except Exception as e:
+                logger.error(
+                    "write_ohlcv failed symbol=%s timeframe=%s rows=%s: %s",
+                    symbol,
+                    timeframe,
+                    len(rows),
+                    e,
+                    exc_info=True,
+                )
+                raise
 
     def read_ohlcv(
         self,

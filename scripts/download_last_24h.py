@@ -1,6 +1,6 @@
 """
 Test script: download last 24 hours of OHLCV for the first 10 symbols and configured timeframes.
-Uses data.Collector (REST) and data.Storage; writes to settings.db_path (SQLite) by default.
+Uses data.Collector (REST) and data.Storage; writes to DATABASE_URL (Postgres) when set, else SQLite at settings.db_path.
 Run from project root: python scripts/download_last_24h.py
 """
 
@@ -25,7 +25,7 @@ def main() -> None:
     start_time_ms = end_time_ms - 24 * 3600 * 1000
 
     collector = Collector(use_testnet=settings.use_testnet)
-    storage = Storage(db_path=settings.db_path)
+    storage = Storage()
 
     # Only settings: first 10 symbols, configured timeframes and db
     symbols = settings.symbols[:10]
@@ -50,11 +50,12 @@ def main() -> None:
                 failed.append((symbol, timeframe, str(e)))
             time.sleep(0.05)
 
+    db_target = "Postgres (DATABASE_URL)" if settings.database_url else f"SQLite ({settings.db_path})"
     logger.info(
         "Downloaded last 24h: %s/%s symbol/timeframe pairs written to %s",
         ok,
         total,
-        settings.db_path,
+        db_target,
     )
     if failed:
         logger.warning("Failed (%s):", len(failed))

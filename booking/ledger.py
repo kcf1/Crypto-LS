@@ -7,6 +7,7 @@ from sqlalchemy import create_engine, text
 
 from config import settings
 
+# SQLite-only schema (Postgres schema is managed by Alembic)
 BOOKING_SCHEMA = """
 CREATE TABLE IF NOT EXISTS orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,14 +44,33 @@ CREATE TABLE IF NOT EXISTS positions (
 """
 
 
-class Ledger:
-    """Trade/position ledger: record orders and trades, query positions."""
+def _engine_url(db_path: Optional[str] = None, database_url: Optional[str] = None) -> str:
+    """Resolve engine URL: DATABASE_URL if set, else SQLite at db_path."""
+    if database_url:
+        return database_url
+    if settings.database_url:
+        return settings.database_url
+    path = Path(db_path or settings.db_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return f"sqlite:///{path.resolve()}"
 
-    def __init__(self, db_path: Optional[str] = None) -> None:
-        path = Path(db_path or settings.db_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._engine = create_engine(f"sqlite:///{path}", echo=False)
-        self._init_schema()
+
+def _is_postgres(url: str) -> bool:
+    return url.strip().startswith("postgresql") or url.strip().startswith("postgres+")
+
+
+class Ledger:
+    """Trade/position ledger: record orders and trades, query positions. Uses DATABASE_URL when set."""
+
+    def __init__(
+        self,
+        db_path: Optional[str] = None,
+        database_url: Optional[str] = None,
+    ) -> None:
+        url = _engine_url(db_path=db_path, database_url=database_url)
+        self._engine = create_engine(url, echo=False)
+        if not _is_postgres(url):
+            self._init_schema()
 
     def _init_schema(self) -> None:
         with self._engine.connect() as conn:
@@ -80,6 +100,7 @@ class Ledger:
                     INSERT INTO orders
                     (venue, exchange_order_id, symbol, side, order_type, quantity, price, status, created_at, updated_at)
                     VALUES (:venue, :exchange_order_id, :symbol, :side, :order_type, :quantity, :price, :status, :created_at, :updated_at)
+                    RETURNING id
                 """),
                 {
                     "venue": venue,
@@ -95,7 +116,8 @@ class Ledger:
                 },
             )
             conn.commit()
-            return result.lastrowid or 0
+            row = result.fetchone()
+            return row[0] if row else 0
 
     def record_trade(
         self,
@@ -116,6 +138,7 @@ class Ledger:
                     INSERT INTO trades
                     (venue, exchange_trade_id, order_id, symbol, side, quantity, price, commission, traded_at)
                     VALUES (:venue, :exchange_trade_id, :order_id, :symbol, :side, :quantity, :price, :commission, :traded_at)
+                    RETURNING id
                 """),
                 {
                     "venue": venue,
@@ -130,7 +153,8 @@ class Ledger:
                 },
             )
             conn.commit()
-            trade_id = result.lastrowid or 0
+            row = result.fetchone()
+            trade_id = row[0] if row else 0
             self._update_position(conn, symbol, side, quantity, price, traded_at)
             return trade_id
 
