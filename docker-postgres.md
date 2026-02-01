@@ -38,6 +38,18 @@
    - **Save password:** optional
 4. **Save**
 
+## Migrations (Alembic)
+
+After Postgres is up, apply schema from the repo:
+
+```bash
+# Ensure DATABASE_URL is set (e.g. in .env): postgresql://crypto:crypto@localhost:5432/cryptols
+alembic upgrade head
+```
+
+- Migrations live in `alembic/versions/`.
+- New schema changes: `alembic revision -m "description"`, then edit the new file and run `alembic upgrade head`.
+
 ## Container & Network
 
 - **Containers:** `crypto-ls-postgres`, `crypto-ls-pgadmin`

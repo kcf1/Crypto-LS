@@ -4,3 +4,4 @@ websocket-client>=1.6.0
 pandas>=2.0.0
 requests>=2.31.0
 sqlalchemy>=2.0.0
+alembic>=1.13.0
