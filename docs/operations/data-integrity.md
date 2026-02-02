@@ -245,5 +245,5 @@ Or implement retention in the check scripts.
 ## Related Documentation
 
 - `reports/README.md` - Report directory structure
-- `MONITORING.md` - Docker service monitoring
-- `docker-postgres.md` - Database setup
+- [Monitoring](monitoring.md) - Docker service monitoring
+- [Docker Setup](docker-setup.md) - Database setup
