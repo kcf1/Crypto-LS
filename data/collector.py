@@ -111,15 +111,48 @@ class Collector:
             resp = requests.get(url, params=params, timeout=30)
             resp.raise_for_status()
             raw = resp.json()
+            
+            # Handle empty or invalid responses (could be due to rate limits)
+            if not isinstance(raw, list):
+                logger.warning("fetch_funding_rate %s: invalid response format: %s", symbol, type(raw))
+                return []
+            
+            if not raw:
+                logger.debug("fetch_funding_rate %s: empty response (may be rate limited)", symbol)
+                return []
+            
             # Binance funding rate: [funding_time, funding_rate, mark_price]
-            rows = [
-                (
-                    int(r["fundingTime"]),
-                    float(r["fundingRate"]),
-                    float(r["markPrice"]),
-                )
-                for r in raw
-            ]
+            # Handle empty strings by converting to None, then to 0.0 if needed
+            rows = []
+            for r in raw:
+                try:
+                    # Skip if missing required fields
+                    if "fundingTime" not in r:
+                        logger.warning("Skipping row missing fundingTime: %s", r)
+                        continue
+                    
+                    funding_rate_str = r.get("fundingRate", "")
+                    mark_price_str = r.get("markPrice", "")
+                    
+                    # Convert empty strings to 0.0
+                    funding_rate = float(funding_rate_str) if funding_rate_str and funding_rate_str.strip() else 0.0
+                    mark_price = float(mark_price_str) if mark_price_str and mark_price_str.strip() else 0.0
+                    
+                    rows.append(
+                        (
+                            int(r["fundingTime"]),
+                            funding_rate,
+                            mark_price,
+                        )
+                    )
+                except (ValueError, TypeError, KeyError) as e:
+                    logger.warning(
+                        "Skipping invalid funding rate row for %s: %s (error: %s)",
+                        symbol,
+                        r,
+                        e,
+                    )
+                    continue
             logger.debug("fetch_funding_rate %s: %s rows", symbol, len(rows))
             return rows
         except Exception as e:
@@ -158,15 +191,50 @@ class Collector:
             resp = requests.get(url, params=params, timeout=30)
             resp.raise_for_status()
             raw = resp.json()
-            # Binance open interest: [timestamp, sumOpenInterest, sumOpenInterestValue]
-            rows = [
-                (
-                    int(r["timestamp"]),
-                    float(r["sumOpenInterest"]),
-                    float(r["sumOpenInterestValue"]),
-                )
-                for r in raw
-            ]
+            
+            # Handle empty or invalid responses (could be due to rate limits)
+            if not isinstance(raw, list):
+                logger.warning("fetch_open_interest_hist %s %s: invalid response format: %s", symbol, period, type(raw))
+                return []
+            
+            if not raw:
+                logger.debug("fetch_open_interest_hist %s %s: empty response (may be rate limited)", symbol, period)
+                return []
+            
+            # Binance open interest: list of dicts with timestamp, sumOpenInterest, sumOpenInterestValue
+            rows = []
+            for r in raw:
+                try:
+                    # Skip if missing required fields
+                    if not isinstance(r, dict) or "timestamp" not in r:
+                        logger.warning("Skipping invalid open interest row: %s", r)
+                        continue
+                    
+                    timestamp_val = r.get("timestamp")
+                    oi_val = r.get("sumOpenInterest", "")
+                    oi_value_val = r.get("sumOpenInterestValue", "")
+                    
+                    # Convert empty strings/None to 0.0
+                    timestamp = int(timestamp_val) if timestamp_val else 0
+                    sum_open_interest = float(oi_val) if oi_val and str(oi_val).strip() else 0.0
+                    sum_open_interest_value = float(oi_value_val) if oi_value_val and str(oi_value_val).strip() else 0.0
+                    
+                    rows.append(
+                        (
+                            timestamp,
+                            sum_open_interest,
+                            sum_open_interest_value,
+                        )
+                    )
+                except (ValueError, TypeError, KeyError) as e:
+                    logger.warning(
+                        "Skipping invalid open interest row for %s %s: %s (error: %s)",
+                        symbol,
+                        period,
+                        r,
+                        e,
+                    )
+                    continue
             logger.debug("fetch_open_interest_hist %s %s: %s rows", symbol, period, len(rows))
             return rows
         except Exception as e:

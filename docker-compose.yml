@@ -32,9 +32,11 @@ services:
       context: .
       dockerfile: Dockerfile.updater
     container_name: crypto-ls-data-updater
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql://crypto:crypto@postgres:5432/cryptols
-      UPDATER_INTERVAL_SEC: "300"
+      UPDATER_INTERVAL_SEC: ${UPDATER_INTERVAL_SEC:-300}
     depends_on:
       postgres:
         condition: service_healthy

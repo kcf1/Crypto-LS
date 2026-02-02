@@ -200,6 +200,35 @@ class Storage:
                 )
                 raise
 
+    def read_funding_rate(
+        self,
+        symbol: str,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+    ) -> List[tuple]:
+        """
+        Read funding rate rows for a symbol.
+        Returns list of tuples: (funding_time, funding_rate, mark_price).
+        """
+        sql = """
+            SELECT funding_time, funding_rate, mark_price
+            FROM funding_rate
+            WHERE symbol = :symbol
+        """
+        params: dict[str, Any] = {"symbol": symbol}
+        if start_time is not None:
+            sql += " AND funding_time >= :start_time"
+            params["start_time"] = start_time
+        if end_time is not None:
+            sql += " AND funding_time < :end_time"
+            params["end_time"] = end_time
+        sql += " ORDER BY funding_time ASC"
+        
+        with self._engine.connect() as conn:
+            result = conn.execute(text(sql), params)
+            rows = result.fetchall()
+        return [(int(r[0]), float(r[1]), float(r[2])) for r in rows]
+
     def get_latest_funding_time(self, symbol: str) -> Optional[int]:
         """Return the latest (max) funding_time for the given symbol, or None if no rows."""
         sql = """

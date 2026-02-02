@@ -1,14 +1,8 @@
 """
-Backfill Funding Rate: up to 5 years or maximum available, for all symbols in settings.symbols.
-Uses data.Collector (REST) and data.Storage; writes to DATABASE_URL (Postgres) when set, else SQLite.
-Paginates by 1000 records per request (Binance limit).
+Test script: Backfill Funding Rate for first 10 symbols only.
+Quick test to verify funding rate collection works before running full backfill.
 
-Binance Futures API limits:
-- Request weight: Shares 500/5min/IP with fundingInfo endpoint
-- Exceeding returns 429; repeated violations can cause IP ban.
-- Script uses a delay between requests; 429 triggers retry after Retry-After seconds.
-
-Run from project root: python scripts/backfill/backfill_funding_rate.py
+Run from project root: python scripts/backfill/test_backfill_funding_rate.py
 """
 
 import logging
@@ -17,7 +11,6 @@ import time
 from pathlib import Path
 
 import requests
-from tqdm import tqdm
 
 # Run from project root so config and data are importable
 if str(Path(__file__).resolve().parent.parent.parent) not in sys.path:
@@ -28,15 +21,11 @@ from data import Collector, Storage
 
 logger = logging.getLogger(__name__)
 
-# 5 years in milliseconds
-SECONDS_PER_5Y = 5 * 365.25 * 24 * 3600
-MS_PER_5Y = int(SECONDS_PER_5Y * 1000)
+# Test with shorter time range: last 30 days instead of 5 years
+DAYS_BACK = 30
+MS_PER_30D = int(DAYS_BACK * 24 * 3600 * 1000)
 
-# Funding rate updates every 8 hours, so ~3 per day
-# 5 years = ~5,475 funding rate records per symbol
-FUNDING_RATES_PER_5Y = int(5 * 365.25 * 3)
-
-DELAY_SEC = 0.2  # Increased delay to reduce rate limit issues
+DELAY_SEC = 0.2
 MAX_429_RETRIES = 5
 MAX_EMPTY_RETRIES = 3  # Retry if empty response (could be rate limit)
 EMPTY_RETRY_DELAY = 2.0  # Wait 2 seconds before retrying empty response
@@ -89,34 +78,16 @@ def fetch_funding_rate_with_retry(
 
 def main() -> None:
     setup_logging()
-    
-    # Wait 60 minutes before starting backfill
-    WAIT_MINUTES = 60
-    WAIT_SECONDS = WAIT_MINUTES * 60
-    
-    print(f"Waiting {WAIT_MINUTES} minutes before starting backfill...")
-    print("Press Ctrl+C to cancel and start immediately\n")
-    
-    try:
-        # Show progress bar for 60 minutes (update every 10 seconds for smoother display)
-        with tqdm(total=WAIT_SECONDS, desc="Waiting", unit="s", ncols=100, bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}s [{elapsed}<{remaining}]") as pbar:
-            for _ in range(WAIT_SECONDS):
-                time.sleep(1)
-                pbar.update(1)
-    except KeyboardInterrupt:
-        print("\n\nStarting backfill immediately (wait cancelled)")
-    
-    print("\nStarting funding rate backfill...\n")
-    
-    symbols = settings.symbols
+    # Test with first 10 symbols only
+    symbols = settings.symbols[:10]
     end_time_ms = int(time.time() * 1000)
-    start_time_ms = end_time_ms - MS_PER_5Y
+    start_time_ms = end_time_ms - MS_PER_30D
     run_start = time.perf_counter()
 
     collector = Collector(use_testnet=settings.use_testnet)
     storage = Storage()
 
-    logger.info("Starting funding rate backfill: %s symbols, target: 5 years", len(symbols))
+    logger.info("TEST: Funding rate backfill for %s symbols, last %s days", len(symbols), DAYS_BACK)
     db_target = "Postgres (DATABASE_URL)" if settings.database_url else f"SQLite ({settings.db_path})"
     logger.info("Target: %s", db_target)
 
@@ -159,14 +130,16 @@ def main() -> None:
 
     elapsed_sec = time.perf_counter() - run_start
     logger.info(
-        "Done: %s total rows written to %s in %.1f min",
+        "TEST COMPLETE: %s total rows written to %s in %.1f sec",
         total_written,
         db_target,
-        elapsed_sec / 60,
+        elapsed_sec,
     )
     if failed:
         logger.warning("Failed symbols (%s): %s", len(failed), [s for s, _ in failed])
-    print(f"Done: {total_written} rows in {elapsed_sec / 60:.1f} min.")
+        print(f"FAILED: {len(failed)} symbols")
+    else:
+        print(f"SUCCESS: {total_written} rows written in {elapsed_sec:.1f} sec.")
 
 
 if __name__ == "__main__":
