@@ -7,8 +7,12 @@ This directory contains reports from data integrity checks.
 ```
 reports/
 ├── integrity/          # Data integrity check reports
-│   ├── missing_bars_*.json    # JSON format reports
-│   └── missing_bars_*.txt      # Human-readable text reports
+│   ├── missing_bars_*.json              # OHLCV bars integrity reports (JSON)
+│   ├── missing_bars_*.txt                # OHLCV bars integrity reports (text)
+│   ├── missing_funding_rate_*.json      # Funding rate integrity reports (JSON)
+│   ├── missing_funding_rate_*.txt       # Funding rate integrity reports (text)
+│   ├── missing_open_interest_*.json     # Open interest integrity reports (JSON)
+│   └── missing_open_interest_*.txt      # Open interest integrity reports (text)
 └── README.md           # This file
 ```
 
@@ -28,6 +32,34 @@ Checks for missing 5-minute OHLCV bars in the last 48 hours for all configured s
 - List of symbols with no recent data
 - List of symbols with no data at all
 
+### Missing Funding Rate Check
+
+Checks for missing funding rate records in the last 30 days for all configured symbols. Funding rates update every 8 hours (00:00, 08:00, 16:00 UTC).
+
+**Files:**
+- `missing_funding_rate_YYYYMMDD_HHMMSS.json` - Machine-readable JSON report
+- `missing_funding_rate_YYYYMMDD_HHMMSS.txt` - Human-readable text report
+
+**Report Contents:**
+- Summary statistics (total symbols, coverage, missing records)
+- Detailed gap information for symbols with missing funding rate data
+- List of symbols with no recent data
+- List of symbols with no data at all
+
+### Missing Open Interest Check
+
+Checks for missing open interest records in the last 7 days for all configured symbols. Open interest updates every 5 minutes.
+
+**Files:**
+- `missing_open_interest_YYYYMMDD_HHMMSS.json` - Machine-readable JSON report
+- `missing_open_interest_YYYYMMDD_HHMMSS.txt` - Human-readable text report
+
+**Report Contents:**
+- Summary statistics (total symbols, coverage, missing records)
+- Detailed gap information for symbols with missing open interest data
+- List of symbols with no recent data
+- List of symbols with no data at all
+
 ## Running Checks
 
 ### Manual Execution
@@ -36,8 +68,14 @@ Checks for missing 5-minute OHLCV bars in the last 48 hours for all configured s
 # Run missing bars check
 python scripts/integrity/check_missing_bars.py
 
+# Run funding rate check
+python scripts/integrity/check_missing_funding_rate.py
+
+# Run open interest check
+python scripts/integrity/check_missing_open_interest.py
+
 # Run all integrity checks
-python scripts/run_integrity_checks.py
+python scripts/integrity/run_integrity_checks.py
 ```
 
 ### Scheduled Execution
@@ -92,6 +130,10 @@ Reports are saved with timestamps. Consider implementing a cleanup script to rem
 # Keep only last 30 days of reports
 find reports/integrity -name "*.json" -mtime +30 -delete
 find reports/integrity -name "*.txt" -mtime +30 -delete
+
+# Windows PowerShell equivalent
+Get-ChildItem reports/integrity -Filter *.json | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-30) } | Remove-Item
+Get-ChildItem reports/integrity -Filter *.txt | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-30) } | Remove-Item
 ```
 
 ## Monitoring

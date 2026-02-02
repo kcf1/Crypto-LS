@@ -1,8 +1,8 @@
 """
-Check for missing funding rate records.
-Funding rate updates every 8 hours (00:00, 08:00, 16:00 UTC).
+Check for missing open interest records.
+Open interest updates every 5 minutes (5m period).
 
-Run from project root: python scripts/integrity/check_missing_funding_rate.py
+Run from project root: python scripts/integrity/check_missing_open_interest.py
 """
 
 import sys
@@ -18,58 +18,61 @@ import pandas as pd
 from config import settings
 from data import Storage
 
-# Funding rate updates every 8 hours
-FUNDING_INTERVAL_HOURS = 8
-FUNDING_INTERVAL_MS = FUNDING_INTERVAL_HOURS * 3600 * 1000
+# Open interest updates every 5 minutes
+PERIOD = "5m"
+INTERVAL_MINUTES = 5
+INTERVAL_MS = INTERVAL_MINUTES * 60 * 1000
 
-# Check last 30 days by default
-DAYS_BACK = 30
+# Check last 7 days by default (Binance retains ~30 days)
+DAYS_BACK = 7
 
 
-def round_down_to_funding_time(dt: datetime) -> datetime:
-    """Round down datetime to the nearest funding rate time (00:00, 08:00, 16:00 UTC)."""
+def round_down_to_5min(dt: datetime) -> datetime:
+    """Round down datetime to the nearest 5-minute boundary (e.g., 08:33 -> 08:30)."""
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    
-    # Funding times are at 00:00, 08:00, 16:00 UTC
-    hour = dt.hour
-    funding_hour = (hour // FUNDING_INTERVAL_HOURS) * FUNDING_INTERVAL_HOURS
-    
-    return dt.replace(hour=funding_hour, minute=0, second=0, microsecond=0)
+    minutes = dt.minute
+    rounded_minutes = (minutes // INTERVAL_MINUTES) * INTERVAL_MINUTES
+    return dt.replace(minute=rounded_minutes, second=0, microsecond=0)
 
 
-def generate_expected_funding_times(start_time: datetime, end_time: datetime) -> pd.DatetimeIndex:
-    """Generate expected funding rate timestamps (every 8 hours)."""
+def generate_expected_timestamps(start_time: datetime, end_time: datetime) -> pd.DatetimeIndex:
+    """Generate expected 5-minute timestamps between start and end (UTC, aligned to 5-min boundaries)."""
     # Ensure UTC timezone
     if start_time.tzinfo is None:
         start_time = start_time.replace(tzinfo=timezone.utc)
     if end_time.tzinfo is None:
         end_time = end_time.replace(tzinfo=timezone.utc)
     
-    # Round down to funding rate boundaries
-    start_aligned = round_down_to_funding_time(start_time)
-    end_aligned = round_down_to_funding_time(end_time)
+    # Round down to 5-minute boundaries
+    start_aligned = round_down_to_5min(start_time)
+    end_aligned = round_down_to_5min(end_time)
     
-    # Generate timestamps (every 8 hours)
+    # Generate timestamps (inclusive left, exclusive right)
     return pd.date_range(
         start=start_aligned,
         end=end_aligned,
-        freq=f"{FUNDING_INTERVAL_HOURS}H",
+        freq=f"{INTERVAL_MINUTES}min",
         inclusive="left",
         tz="UTC",
     )
 
 
-def check_symbol(storage: Storage, symbol: str, start_time: datetime, end_time: datetime) -> dict:
-    """Check for missing funding rate records for a single symbol. Returns report dict."""
+def check_symbol(storage: Storage, symbol: str, period: str, start_time: datetime, end_time: datetime) -> dict:
+    """Check for missing open interest records for a single symbol. Returns report dict."""
     # Ensure UTC timezone
     if start_time.tzinfo is None:
         start_time = start_time.replace(tzinfo=timezone.utc)
     if end_time.tzinfo is None:
         end_time = end_time.replace(tzinfo=timezone.utc)
     
-    # Get stored funding rate data
-    rows = storage.read_funding_rate(symbol=symbol, start_time=int(start_time.timestamp() * 1000), end_time=int(end_time.timestamp() * 1000))
+    # Get stored open interest data
+    rows = storage.read_open_interest(
+        symbol=symbol,
+        period=period,
+        start_time=int(start_time.timestamp() * 1000),
+        end_time=int(end_time.timestamp() * 1000),
+    )
     
     if not rows:
         return {
@@ -84,14 +87,14 @@ def check_symbol(storage: Storage, symbol: str, start_time: datetime, end_time: 
     
     df = pd.DataFrame(
         rows,
-        columns=["funding_time", "funding_rate", "mark_price"],
+        columns=["timestamp", "sum_open_interest", "sum_open_interest_value"],
     )
     # Convert to UTC-aware datetime
-    df["datetime"] = pd.to_datetime(df["funding_time"], unit="ms", utc=True)
+    df["datetime"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
     
-    # Round down to funding rate boundaries
-    start_time_aligned = round_down_to_funding_time(start_time)
-    end_time_aligned = round_down_to_funding_time(end_time)
+    # Round down to 5-minute boundaries
+    start_time_aligned = round_down_to_5min(start_time)
+    end_time_aligned = round_down_to_5min(end_time)
     
     # Filter to time range
     df_filtered = df[(df["datetime"] >= start_time_aligned) & (df["datetime"] < end_time_aligned)].copy()
@@ -109,15 +112,15 @@ def check_symbol(storage: Storage, symbol: str, start_time: datetime, end_time: 
         }
     
     # Generate expected timestamps
-    expected_times = generate_expected_funding_times(start_time_aligned, end_time_aligned)
+    expected_times = generate_expected_timestamps(start_time_aligned, end_time_aligned)
     
-    # Normalize found timestamps to funding rate boundaries
+    # Normalize found timestamps to 5-minute boundaries
     found_times_normalized = set(
-        round_down_to_funding_time(ts.to_pydatetime()) for ts in df_filtered["datetime"]
+        round_down_to_5min(ts.to_pydatetime()) for ts in df_filtered["datetime"]
     )
     
     # Find missing records
-    missing_times = [t for t in expected_times if round_down_to_funding_time(t.to_pydatetime()) not in found_times_normalized]
+    missing_times = [t for t in expected_times if round_down_to_5min(t.to_pydatetime()) not in found_times_normalized]
     
     # Group consecutive missing records into gaps
     gaps = []
@@ -128,28 +131,28 @@ def check_symbol(storage: Storage, symbol: str, start_time: datetime, end_time: 
         gap_end = gap_start
         
         for i in range(1, len(missing_sorted)):
-            time_diff_hours = (missing_sorted[i] - gap_end).total_seconds() / 3600
-            if time_diff_hours == FUNDING_INTERVAL_HOURS:
+            time_diff_minutes = (missing_sorted[i] - gap_end).total_seconds() / 60
+            if time_diff_minutes == INTERVAL_MINUTES:
                 gap_end = missing_sorted[i]
             else:
                 # Gap ended, save it
-                duration_hours = (gap_end - gap_start).total_seconds() / 3600
+                duration_minutes = (gap_end - gap_start).total_seconds() / 60
                 gaps.append({
                     "start": gap_start.isoformat(),
                     "end": gap_end.isoformat(),
-                    "duration_hours": int(duration_hours) + FUNDING_INTERVAL_HOURS,
-                    "missing_records": int(duration_hours / FUNDING_INTERVAL_HOURS) + 1,
+                    "duration_minutes": int(duration_minutes) + INTERVAL_MINUTES,
+                    "missing_records": int(duration_minutes / INTERVAL_MINUTES) + 1,
                 })
                 gap_start = missing_sorted[i]
                 gap_end = gap_start
         
         # Add last gap
-        duration_hours = (gap_end - gap_start).total_seconds() / 3600
+        duration_minutes = (gap_end - gap_start).total_seconds() / 60
         gaps.append({
             "start": gap_start.isoformat(),
             "end": gap_end.isoformat(),
-            "duration_hours": int(duration_hours) + FUNDING_INTERVAL_HOURS,
-            "missing_records": int(duration_hours / FUNDING_INTERVAL_HOURS) + 1,
+            "duration_minutes": int(duration_minutes) + INTERVAL_MINUTES,
+            "missing_records": int(duration_minutes / INTERVAL_MINUTES) + 1,
         })
     
     total_expected = len(expected_times)
@@ -191,25 +194,26 @@ def save_results(
             "end": end_time.isoformat(),
             "days_back": DAYS_BACK,
         },
-        "funding_interval_hours": FUNDING_INTERVAL_HOURS,
+        "period": PERIOD,
+        "interval_minutes": INTERVAL_MINUTES,
         "summary": summary,
         "symbol_reports": reports,
     }
     
-    json_path = output_dir / f"missing_funding_rate_{timestamp}.json"
+    json_path = output_dir / f"missing_open_interest_{timestamp}.json"
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(json_data, f, indent=2, ensure_ascii=False)
     
     # Save text report
-    txt_path = output_dir / f"missing_funding_rate_{timestamp}.txt"
+    txt_path = output_dir / f"missing_open_interest_{timestamp}.txt"
     with open(txt_path, "w", encoding="utf-8") as f:
         f.write("=" * 80 + "\n")
-        f.write("FUNDING RATE DATA INTEGRITY CHECK REPORT\n")
+        f.write("OPEN INTEREST DATA INTEGRITY CHECK REPORT\n")
         f.write("=" * 80 + "\n\n")
         f.write(f"Check Time: {datetime.now(timezone.utc).isoformat()} UTC\n")
         f.write(f"Time Range: {start_time.isoformat()} → {end_time.isoformat()}\n")
         f.write(f"Days Back: {DAYS_BACK}\n")
-        f.write(f"Funding Interval: Every {FUNDING_INTERVAL_HOURS} hours (00:00, 08:00, 16:00 UTC)\n")
+        f.write(f"Period: {PERIOD} (updates every {INTERVAL_MINUTES} minutes)\n")
         f.write(f"Symbols Checked: {summary['total_symbols']}\n")
         f.write("\n")
         f.write("SUMMARY\n")
@@ -239,7 +243,7 @@ def save_results(
                 f.write(f"  Data range: {report.get('earliest_data', 'N/A')} → {report.get('latest_data', 'N/A')}\n")
                 f.write(f"  Gaps: {len(report['gaps'])}\n")
                 for i, gap in enumerate(report['gaps'][:10], 1):
-                    f.write(f"    Gap {i}: {gap['start']} → {gap['end']} ({gap['duration_hours']} hours, {gap['missing_records']} records)\n")
+                    f.write(f"    Gap {i}: {gap['start']} → {gap['end']} ({gap['duration_minutes']} min, {gap['missing_records']} records)\n")
                 if len(report['gaps']) > 10:
                     f.write(f"    ... and {len(report['gaps']) - 10} more gaps\n")
                 f.write("\n")
@@ -276,16 +280,16 @@ def main() -> int:
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(days=DAYS_BACK)
     
-    # Round down to funding rate boundaries
-    start_time_aligned = round_down_to_funding_time(start_time)
-    end_time_aligned = round_down_to_funding_time(end_time)
+    # Round down to 5-minute boundaries
+    start_time_aligned = round_down_to_5min(start_time)
+    end_time_aligned = round_down_to_5min(end_time)
     
     # Setup output directory
     project_root = Path(__file__).resolve().parent.parent.parent
     output_dir = project_root / "reports" / "integrity"
     
-    print(f"Checking missing funding rate records for last {DAYS_BACK} days (UTC)")
-    print(f"Funding rate updates every {FUNDING_INTERVAL_HOURS} hours (00:00, 08:00, 16:00 UTC)")
+    print(f"Checking missing open interest records for last {DAYS_BACK} days (UTC)")
+    print(f"Period: {PERIOD} (updates every {INTERVAL_MINUTES} minutes)")
     print(f"Time range: {start_time_aligned.isoformat()} → {end_time_aligned.isoformat()}")
     print(f"Symbols to check: {len(symbols)}")
     print("=" * 80)
@@ -294,7 +298,7 @@ def main() -> int:
     reports = []
     for i, symbol in enumerate(symbols, 1):
         print(f"[{i}/{len(symbols)}] Checking {symbol}...", end=" ", flush=True)
-        report = check_symbol(storage, symbol, start_time_aligned, end_time_aligned)
+        report = check_symbol(storage, symbol, PERIOD, start_time_aligned, end_time_aligned)
         reports.append(report)
         
         if report["status"] == "no_data":
@@ -354,7 +358,7 @@ def main() -> int:
             
             # Show first 5 gaps
             for i, gap in enumerate(report['gaps'][:5], 1):
-                print(f"    Gap {i}: {gap['start']} → {gap['end']} ({gap['duration_hours']} hours, {gap['missing_records']} records)")
+                print(f"    Gap {i}: {gap['start']} → {gap['end']} ({gap['duration_minutes']} min, {gap['missing_records']} records)")
             
             if len(report['gaps']) > 5:
                 print(f"    ... and {len(report['gaps']) - 5} more gaps")
@@ -363,7 +367,7 @@ def main() -> int:
     # Symbols with no recent data
     if no_recent_symbols > 0:
         print("=" * 80)
-        print("SYMBOLS WITH NO RECENT DATA (last 30 days)")
+        print(f"SYMBOLS WITH NO RECENT DATA (last {DAYS_BACK} days)")
         print("=" * 80)
         print()
         

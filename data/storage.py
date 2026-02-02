@@ -285,6 +285,36 @@ class Storage:
                 )
                 raise
 
+    def read_open_interest(
+        self,
+        symbol: str,
+        period: str,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+    ) -> List[tuple]:
+        """
+        Read open interest rows for a symbol and period.
+        Returns list of tuples: (timestamp, sum_open_interest, sum_open_interest_value).
+        """
+        sql = """
+            SELECT timestamp, sum_open_interest, sum_open_interest_value
+            FROM open_interest
+            WHERE symbol = :symbol AND period = :period
+        """
+        params: dict[str, Any] = {"symbol": symbol, "period": period}
+        if start_time is not None:
+            sql += " AND timestamp >= :start_time"
+            params["start_time"] = start_time
+        if end_time is not None:
+            sql += " AND timestamp < :end_time"
+            params["end_time"] = end_time
+        sql += " ORDER BY timestamp ASC"
+        
+        with self._engine.connect() as conn:
+            result = conn.execute(text(sql), params)
+            rows = result.fetchall()
+        return [(int(r[0]), float(r[1]), float(r[2])) for r in rows]
+
     def get_latest_open_interest_time(self, symbol: str, period: str) -> Optional[int]:
         """Return the latest (max) timestamp for the given symbol/period, or None if no rows."""
         sql = """
