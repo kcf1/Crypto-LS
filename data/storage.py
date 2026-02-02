@@ -331,6 +331,402 @@ class Storage:
             return None
         return int(row[0])
 
+    # Basis methods
+    BASIS_UPSERT_SQL = """
+    INSERT INTO basis (symbol, period, timestamp, basis_rate, basis, futures_price, index_price)
+    VALUES (:symbol, :period, :timestamp, :basis_rate, :basis, :futures_price, :index_price)
+    ON CONFLICT (symbol, period, timestamp) DO UPDATE SET
+      basis_rate = EXCLUDED.basis_rate,
+      basis = EXCLUDED.basis,
+      futures_price = EXCLUDED.futures_price,
+      index_price = EXCLUDED.index_price
+    """
+
+    def write_basis(
+        self,
+        symbol: str,
+        period: str,
+        rows: Sequence[tuple],  # (timestamp, basis_rate, basis, futures_price, index_price)
+    ) -> None:
+        """Write basis rows."""
+        if not rows:
+            return
+        with self._engine.connect() as conn:
+            try:
+                for r in rows:
+                    conn.execute(
+                        text(self.BASIS_UPSERT_SQL),
+                        {
+                            "symbol": symbol,
+                            "period": period,
+                            "timestamp": r[0],
+                            "basis_rate": r[1],
+                            "basis": r[2],
+                            "futures_price": r[3],
+                            "index_price": r[4],
+                        },
+                    )
+                conn.commit()
+            except Exception as e:
+                logger.error("write_basis failed symbol=%s period=%s rows=%s: %s", symbol, period, len(rows), e, exc_info=True)
+                raise
+
+    def read_basis(
+        self,
+        symbol: str,
+        period: str,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+    ) -> List[tuple]:
+        """Read basis rows. Returns list of tuples: (timestamp, basis_rate, basis, futures_price, index_price)."""
+        sql = """
+            SELECT timestamp, basis_rate, basis, futures_price, index_price
+            FROM basis
+            WHERE symbol = :symbol AND period = :period
+        """
+        params: dict[str, Any] = {"symbol": symbol, "period": period}
+        if start_time is not None:
+            sql += " AND timestamp >= :start_time"
+            params["start_time"] = start_time
+        if end_time is not None:
+            sql += " AND timestamp < :end_time"
+            params["end_time"] = end_time
+        sql += " ORDER BY timestamp ASC"
+        
+        with self._engine.connect() as conn:
+            result = conn.execute(text(sql), params)
+            rows = result.fetchall()
+        return [(int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4])) for r in rows]
+
+    def get_latest_basis_time(self, symbol: str, period: str) -> Optional[int]:
+        """Return the latest (max) timestamp for the given symbol/period, or None if no rows."""
+        sql = """
+            SELECT MAX(timestamp) FROM basis
+            WHERE symbol = :symbol AND period = :period
+        """
+        with self._engine.connect() as conn:
+            result = conn.execute(text(sql), {"symbol": symbol, "period": period})
+            row = result.fetchone()
+        if row is None or row[0] is None:
+            return None
+        return int(row[0])
+
+    # Global Long/Short Account methods
+    GLOBAL_LONG_SHORT_ACCOUNT_UPSERT_SQL = """
+    INSERT INTO global_long_short_account (symbol, period, timestamp, long_short_ratio, long_account, short_account)
+    VALUES (:symbol, :period, :timestamp, :long_short_ratio, :long_account, :short_account)
+    ON CONFLICT (symbol, period, timestamp) DO UPDATE SET
+      long_short_ratio = EXCLUDED.long_short_ratio,
+      long_account = EXCLUDED.long_account,
+      short_account = EXCLUDED.short_account
+    """
+
+    def write_global_long_short_account(
+        self,
+        symbol: str,
+        period: str,
+        rows: Sequence[tuple],  # (timestamp, long_short_ratio, long_account, short_account)
+    ) -> None:
+        """Write global long/short account rows."""
+        if not rows:
+            return
+        with self._engine.connect() as conn:
+            try:
+                for r in rows:
+                    conn.execute(
+                        text(self.GLOBAL_LONG_SHORT_ACCOUNT_UPSERT_SQL),
+                        {
+                            "symbol": symbol,
+                            "period": period,
+                            "timestamp": r[0],
+                            "long_short_ratio": r[1],
+                            "long_account": r[2],
+                            "short_account": r[3],
+                        },
+                    )
+                conn.commit()
+            except Exception as e:
+                logger.error("write_global_long_short_account failed symbol=%s period=%s rows=%s: %s", symbol, period, len(rows), e, exc_info=True)
+                raise
+
+    def read_global_long_short_account(
+        self,
+        symbol: str,
+        period: str,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+    ) -> List[tuple]:
+        """Read global long/short account rows. Returns list of tuples: (timestamp, long_short_ratio, long_account, short_account)."""
+        sql = """
+            SELECT timestamp, long_short_ratio, long_account, short_account
+            FROM global_long_short_account
+            WHERE symbol = :symbol AND period = :period
+        """
+        params: dict[str, Any] = {"symbol": symbol, "period": period}
+        if start_time is not None:
+            sql += " AND timestamp >= :start_time"
+            params["start_time"] = start_time
+        if end_time is not None:
+            sql += " AND timestamp < :end_time"
+            params["end_time"] = end_time
+        sql += " ORDER BY timestamp ASC"
+        
+        with self._engine.connect() as conn:
+            result = conn.execute(text(sql), params)
+            rows = result.fetchall()
+        return [(int(r[0]), float(r[1]), float(r[2]), float(r[3])) for r in rows]
+
+    def get_latest_global_long_short_account_time(self, symbol: str, period: str) -> Optional[int]:
+        """Return the latest (max) timestamp for the given symbol/period, or None if no rows."""
+        sql = """
+            SELECT MAX(timestamp) FROM global_long_short_account
+            WHERE symbol = :symbol AND period = :period
+        """
+        with self._engine.connect() as conn:
+            result = conn.execute(text(sql), {"symbol": symbol, "period": period})
+            row = result.fetchone()
+        if row is None or row[0] is None:
+            return None
+        return int(row[0])
+
+    # Top Long/Short Account methods
+    TOP_LONG_SHORT_ACCOUNT_UPSERT_SQL = """
+    INSERT INTO top_long_short_account (symbol, period, timestamp, long_short_ratio, long_account, short_account)
+    VALUES (:symbol, :period, :timestamp, :long_short_ratio, :long_account, :short_account)
+    ON CONFLICT (symbol, period, timestamp) DO UPDATE SET
+      long_short_ratio = EXCLUDED.long_short_ratio,
+      long_account = EXCLUDED.long_account,
+      short_account = EXCLUDED.short_account
+    """
+
+    def write_top_long_short_account(
+        self,
+        symbol: str,
+        period: str,
+        rows: Sequence[tuple],  # (timestamp, long_short_ratio, long_account, short_account)
+    ) -> None:
+        """Write top long/short account rows."""
+        if not rows:
+            return
+        with self._engine.connect() as conn:
+            try:
+                for r in rows:
+                    conn.execute(
+                        text(self.TOP_LONG_SHORT_ACCOUNT_UPSERT_SQL),
+                        {
+                            "symbol": symbol,
+                            "period": period,
+                            "timestamp": r[0],
+                            "long_short_ratio": r[1],
+                            "long_account": r[2],
+                            "short_account": r[3],
+                        },
+                    )
+                conn.commit()
+            except Exception as e:
+                logger.error("write_top_long_short_account failed symbol=%s period=%s rows=%s: %s", symbol, period, len(rows), e, exc_info=True)
+                raise
+
+    def read_top_long_short_account(
+        self,
+        symbol: str,
+        period: str,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+    ) -> List[tuple]:
+        """Read top long/short account rows. Returns list of tuples: (timestamp, long_short_ratio, long_account, short_account)."""
+        sql = """
+            SELECT timestamp, long_short_ratio, long_account, short_account
+            FROM top_long_short_account
+            WHERE symbol = :symbol AND period = :period
+        """
+        params: dict[str, Any] = {"symbol": symbol, "period": period}
+        if start_time is not None:
+            sql += " AND timestamp >= :start_time"
+            params["start_time"] = start_time
+        if end_time is not None:
+            sql += " AND timestamp < :end_time"
+            params["end_time"] = end_time
+        sql += " ORDER BY timestamp ASC"
+        
+        with self._engine.connect() as conn:
+            result = conn.execute(text(sql), params)
+            rows = result.fetchall()
+        return [(int(r[0]), float(r[1]), float(r[2]), float(r[3])) for r in rows]
+
+    def get_latest_top_long_short_account_time(self, symbol: str, period: str) -> Optional[int]:
+        """Return the latest (max) timestamp for the given symbol/period, or None if no rows."""
+        sql = """
+            SELECT MAX(timestamp) FROM top_long_short_account
+            WHERE symbol = :symbol AND period = :period
+        """
+        with self._engine.connect() as conn:
+            result = conn.execute(text(sql), {"symbol": symbol, "period": period})
+            row = result.fetchone()
+        if row is None or row[0] is None:
+            return None
+        return int(row[0])
+
+    # Top Long/Short Position methods
+    TOP_LONG_SHORT_POSITION_UPSERT_SQL = """
+    INSERT INTO top_long_short_position (symbol, period, timestamp, long_short_ratio, long_position, short_position)
+    VALUES (:symbol, :period, :timestamp, :long_short_ratio, :long_position, :short_position)
+    ON CONFLICT (symbol, period, timestamp) DO UPDATE SET
+      long_short_ratio = EXCLUDED.long_short_ratio,
+      long_position = EXCLUDED.long_position,
+      short_position = EXCLUDED.short_position
+    """
+
+    def write_top_long_short_position(
+        self,
+        symbol: str,
+        period: str,
+        rows: Sequence[tuple],  # (timestamp, long_short_ratio, long_position, short_position)
+    ) -> None:
+        """Write top long/short position rows."""
+        if not rows:
+            return
+        with self._engine.connect() as conn:
+            try:
+                for r in rows:
+                    conn.execute(
+                        text(self.TOP_LONG_SHORT_POSITION_UPSERT_SQL),
+                        {
+                            "symbol": symbol,
+                            "period": period,
+                            "timestamp": r[0],
+                            "long_short_ratio": r[1],
+                            "long_position": r[2],
+                            "short_position": r[3],
+                        },
+                    )
+                conn.commit()
+            except Exception as e:
+                logger.error("write_top_long_short_position failed symbol=%s period=%s rows=%s: %s", symbol, period, len(rows), e, exc_info=True)
+                raise
+
+    def read_top_long_short_position(
+        self,
+        symbol: str,
+        period: str,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+    ) -> List[tuple]:
+        """Read top long/short position rows. Returns list of tuples: (timestamp, long_short_ratio, long_position, short_position)."""
+        sql = """
+            SELECT timestamp, long_short_ratio, long_position, short_position
+            FROM top_long_short_position
+            WHERE symbol = :symbol AND period = :period
+        """
+        params: dict[str, Any] = {"symbol": symbol, "period": period}
+        if start_time is not None:
+            sql += " AND timestamp >= :start_time"
+            params["start_time"] = start_time
+        if end_time is not None:
+            sql += " AND timestamp < :end_time"
+            params["end_time"] = end_time
+        sql += " ORDER BY timestamp ASC"
+        
+        with self._engine.connect() as conn:
+            result = conn.execute(text(sql), params)
+            rows = result.fetchall()
+        return [(int(r[0]), float(r[1]), float(r[2]), float(r[3])) for r in rows]
+
+    def get_latest_top_long_short_position_time(self, symbol: str, period: str) -> Optional[int]:
+        """Return the latest (max) timestamp for the given symbol/period, or None if no rows."""
+        sql = """
+            SELECT MAX(timestamp) FROM top_long_short_position
+            WHERE symbol = :symbol AND period = :period
+        """
+        with self._engine.connect() as conn:
+            result = conn.execute(text(sql), {"symbol": symbol, "period": period})
+            row = result.fetchone()
+        if row is None or row[0] is None:
+            return None
+        return int(row[0])
+
+    # Taker Buy/Sell Volume methods
+    TAKER_BUY_SELL_VOL_UPSERT_SQL = """
+    INSERT INTO taker_buy_sell_vol (symbol, period, timestamp, buy_sell_ratio, buy_vol, sell_vol, buy_vol_value, sell_vol_value)
+    VALUES (:symbol, :period, :timestamp, :buy_sell_ratio, :buy_vol, :sell_vol, :buy_vol_value, :sell_vol_value)
+    ON CONFLICT (symbol, period, timestamp) DO UPDATE SET
+      buy_sell_ratio = EXCLUDED.buy_sell_ratio,
+      buy_vol = EXCLUDED.buy_vol,
+      sell_vol = EXCLUDED.sell_vol,
+      buy_vol_value = EXCLUDED.buy_vol_value,
+      sell_vol_value = EXCLUDED.sell_vol_value
+    """
+
+    def write_taker_buy_sell_vol(
+        self,
+        symbol: str,
+        period: str,
+        rows: Sequence[tuple],  # (timestamp, buy_sell_ratio, buy_vol, sell_vol, buy_vol_value, sell_vol_value)
+    ) -> None:
+        """Write taker buy/sell volume rows."""
+        if not rows:
+            return
+        with self._engine.connect() as conn:
+            try:
+                for r in rows:
+                    conn.execute(
+                        text(self.TAKER_BUY_SELL_VOL_UPSERT_SQL),
+                        {
+                            "symbol": symbol,
+                            "period": period,
+                            "timestamp": r[0],
+                            "buy_sell_ratio": r[1],
+                            "buy_vol": r[2],
+                            "sell_vol": r[3],
+                            "buy_vol_value": r[4],
+                            "sell_vol_value": r[5],
+                        },
+                    )
+                conn.commit()
+            except Exception as e:
+                logger.error("write_taker_buy_sell_vol failed symbol=%s period=%s rows=%s: %s", symbol, period, len(rows), e, exc_info=True)
+                raise
+
+    def read_taker_buy_sell_vol(
+        self,
+        symbol: str,
+        period: str,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+    ) -> List[tuple]:
+        """Read taker buy/sell volume rows. Returns list of tuples: (timestamp, buy_sell_ratio, buy_vol, sell_vol, buy_vol_value, sell_vol_value)."""
+        sql = """
+            SELECT timestamp, buy_sell_ratio, buy_vol, sell_vol, buy_vol_value, sell_vol_value
+            FROM taker_buy_sell_vol
+            WHERE symbol = :symbol AND period = :period
+        """
+        params: dict[str, Any] = {"symbol": symbol, "period": period}
+        if start_time is not None:
+            sql += " AND timestamp >= :start_time"
+            params["start_time"] = start_time
+        if end_time is not None:
+            sql += " AND timestamp < :end_time"
+            params["end_time"] = end_time
+        sql += " ORDER BY timestamp ASC"
+        
+        with self._engine.connect() as conn:
+            result = conn.execute(text(sql), params)
+            rows = result.fetchall()
+        return [(int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5])) for r in rows]
+
+    def get_latest_taker_buy_sell_vol_time(self, symbol: str, period: str) -> Optional[int]:
+        """Return the latest (max) timestamp for the given symbol/period, or None if no rows."""
+        sql = """
+            SELECT MAX(timestamp) FROM taker_buy_sell_vol
+            WHERE symbol = :symbol AND period = :period
+        """
+        with self._engine.connect() as conn:
+            result = conn.execute(text(sql), {"symbol": symbol, "period": period})
+            row = result.fetchone()
+        if row is None or row[0] is None:
+            return None
+        return int(row[0])
+
     # Liquidations methods
     LIQUIDATIONS_INSERT_SQL = """
     INSERT INTO liquidations (

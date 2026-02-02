@@ -298,3 +298,297 @@ class Collector:
                 exc_info=True,
             )
             raise
+
+    def fetch_basis(
+        self,
+        symbol: str,  # API uses "pair" but we'll map symbol to pair
+        period: str,  # "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d"
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+        limit: Optional[int] = None,
+    ) -> List[tuple]:
+        """
+        Fetch basis (premium index) data from Binance Futures API.
+        Returns list of tuples: (timestamp, basis_rate, basis, futures_price, index_price).
+        """
+        url = f"{self._fapi_base}/futures/data/basis"
+        params: dict[str, Any] = {
+            "pair": symbol,  # API uses "pair" parameter
+            "contractType": "PERPETUAL",
+            "period": period,
+            "limit": limit or min(500, self._limit),  # Max 500
+        }
+        if start_time is not None:
+            params["startTime"] = start_time
+        if end_time is not None:
+            params["endTime"] = end_time
+        
+        try:
+            resp = requests.get(url, params=params, timeout=30)
+            resp.raise_for_status()
+            raw = resp.json()
+            
+            if not isinstance(raw, list):
+                logger.warning("fetch_basis %s %s: invalid response format: %s", symbol, period, type(raw))
+                return []
+            
+            if not raw:
+                logger.debug("fetch_basis %s %s: empty response", symbol, period)
+                return []
+            
+            rows = []
+            for r in raw:
+                try:
+                    if not isinstance(r, dict) or "timestamp" not in r:
+                        logger.warning("Skipping invalid basis row: %s", r)
+                        continue
+                    
+                    rows.append((
+                        int(r["timestamp"]),
+                        float(r.get("basisRate", 0.0) or 0.0),
+                        float(r.get("basis", 0.0) or 0.0),
+                        float(r.get("futuresPrice", 0.0) or 0.0),
+                        float(r.get("indexPrice", 0.0) or 0.0),
+                    ))
+                except (ValueError, TypeError, KeyError) as e:
+                    logger.warning("Skipping invalid basis row for %s %s: %s (error: %s)", symbol, period, r, e)
+                    continue
+            logger.debug("fetch_basis %s %s: %s rows", symbol, period, len(rows))
+            return rows
+        except Exception as e:
+            logger.warning("fetch_basis failed %s %s: %s", symbol, period, e, exc_info=True)
+            raise
+
+    def fetch_global_long_short_account(
+        self,
+        symbol: str,
+        period: str,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+        limit: Optional[int] = None,
+    ) -> List[tuple]:
+        """
+        Fetch global long/short account ratio from Binance Futures API.
+        Returns list of tuples: (timestamp, long_short_ratio, long_account, short_account).
+        """
+        url = f"{self._fapi_base}/futures/data/globalLongShortAccountRatio"
+        params: dict[str, Any] = {
+            "symbol": symbol,
+            "period": period,
+            "limit": limit or min(500, self._limit),
+        }
+        if start_time is not None:
+            params["startTime"] = start_time
+        if end_time is not None:
+            params["endTime"] = end_time
+        
+        try:
+            resp = requests.get(url, params=params, timeout=30)
+            resp.raise_for_status()
+            raw = resp.json()
+            
+            if not isinstance(raw, list):
+                logger.warning("fetch_global_long_short_account %s %s: invalid response format: %s", symbol, period, type(raw))
+                return []
+            
+            if not raw:
+                logger.debug("fetch_global_long_short_account %s %s: empty response", symbol, period)
+                return []
+            
+            rows = []
+            for r in raw:
+                try:
+                    if not isinstance(r, dict) or "timestamp" not in r:
+                        logger.warning("Skipping invalid global_long_short_account row: %s", r)
+                        continue
+                    
+                    rows.append((
+                        int(r["timestamp"]),
+                        float(r.get("longShortRatio", 0.0) or 0.0),
+                        float(r.get("longAccount", 0.0) or 0.0),
+                        float(r.get("shortAccount", 0.0) or 0.0),
+                    ))
+                except (ValueError, TypeError, KeyError) as e:
+                    logger.warning("Skipping invalid global_long_short_account row for %s %s: %s (error: %s)", symbol, period, r, e)
+                    continue
+            logger.debug("fetch_global_long_short_account %s %s: %s rows", symbol, period, len(rows))
+            return rows
+        except Exception as e:
+            logger.warning("fetch_global_long_short_account failed %s %s: %s", symbol, period, e, exc_info=True)
+            raise
+
+    def fetch_top_long_short_account(
+        self,
+        symbol: str,
+        period: str,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+        limit: Optional[int] = None,
+    ) -> List[tuple]:
+        """
+        Fetch top trader long/short account ratio from Binance Futures API.
+        Returns list of tuples: (timestamp, long_short_ratio, long_account, short_account).
+        """
+        url = f"{self._fapi_base}/futures/data/topLongShortAccountRatio"
+        params: dict[str, Any] = {
+            "symbol": symbol,
+            "period": period,
+            "limit": limit or min(500, self._limit),
+        }
+        if start_time is not None:
+            params["startTime"] = start_time
+        if end_time is not None:
+            params["endTime"] = end_time
+        
+        try:
+            resp = requests.get(url, params=params, timeout=30)
+            resp.raise_for_status()
+            raw = resp.json()
+            
+            if not isinstance(raw, list):
+                logger.warning("fetch_top_long_short_account %s %s: invalid response format: %s", symbol, period, type(raw))
+                return []
+            
+            if not raw:
+                logger.debug("fetch_top_long_short_account %s %s: empty response", symbol, period)
+                return []
+            
+            rows = []
+            for r in raw:
+                try:
+                    if not isinstance(r, dict) or "timestamp" not in r:
+                        logger.warning("Skipping invalid top_long_short_account row: %s", r)
+                        continue
+                    
+                    rows.append((
+                        int(r["timestamp"]),
+                        float(r.get("longShortRatio", 0.0) or 0.0),
+                        float(r.get("longAccount", 0.0) or 0.0),
+                        float(r.get("shortAccount", 0.0) or 0.0),
+                    ))
+                except (ValueError, TypeError, KeyError) as e:
+                    logger.warning("Skipping invalid top_long_short_account row for %s %s: %s (error: %s)", symbol, period, r, e)
+                    continue
+            logger.debug("fetch_top_long_short_account %s %s: %s rows", symbol, period, len(rows))
+            return rows
+        except Exception as e:
+            logger.warning("fetch_top_long_short_account failed %s %s: %s", symbol, period, e, exc_info=True)
+            raise
+
+    def fetch_top_long_short_position(
+        self,
+        symbol: str,
+        period: str,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+        limit: Optional[int] = None,
+    ) -> List[tuple]:
+        """
+        Fetch top trader long/short position ratio from Binance Futures API.
+        Returns list of tuples: (timestamp, long_short_ratio, long_position, short_position).
+        """
+        url = f"{self._fapi_base}/futures/data/topLongShortPositionRatio"
+        params: dict[str, Any] = {
+            "symbol": symbol,
+            "period": period,
+            "limit": limit or min(500, self._limit),
+        }
+        if start_time is not None:
+            params["startTime"] = start_time
+        if end_time is not None:
+            params["endTime"] = end_time
+        
+        try:
+            resp = requests.get(url, params=params, timeout=30)
+            resp.raise_for_status()
+            raw = resp.json()
+            
+            if not isinstance(raw, list):
+                logger.warning("fetch_top_long_short_position %s %s: invalid response format: %s", symbol, period, type(raw))
+                return []
+            
+            if not raw:
+                logger.debug("fetch_top_long_short_position %s %s: empty response", symbol, period)
+                return []
+            
+            rows = []
+            for r in raw:
+                try:
+                    if not isinstance(r, dict) or "timestamp" not in r:
+                        logger.warning("Skipping invalid top_long_short_position row: %s", r)
+                        continue
+                    
+                    rows.append((
+                        int(r["timestamp"]),
+                        float(r.get("longShortRatio", 0.0) or 0.0),
+                        float(r.get("longPosition", 0.0) or 0.0),
+                        float(r.get("shortPosition", 0.0) or 0.0),
+                    ))
+                except (ValueError, TypeError, KeyError) as e:
+                    logger.warning("Skipping invalid top_long_short_position row for %s %s: %s (error: %s)", symbol, period, r, e)
+                    continue
+            logger.debug("fetch_top_long_short_position %s %s: %s rows", symbol, period, len(rows))
+            return rows
+        except Exception as e:
+            logger.warning("fetch_top_long_short_position failed %s %s: %s", symbol, period, e, exc_info=True)
+            raise
+
+    def fetch_taker_buy_sell_vol(
+        self,
+        symbol: str,
+        period: str,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+        limit: Optional[int] = None,
+    ) -> List[tuple]:
+        """
+        Fetch taker buy/sell volume from Binance Futures API.
+        Returns list of tuples: (timestamp, buy_sell_ratio, buy_vol, sell_vol, buy_vol_value, sell_vol_value).
+        """
+        url = f"{self._fapi_base}/futures/data/takerBuySellVol"
+        params: dict[str, Any] = {
+            "symbol": symbol,
+            "period": period,
+            "limit": limit or min(500, self._limit),
+        }
+        if start_time is not None:
+            params["startTime"] = start_time
+        if end_time is not None:
+            params["endTime"] = end_time
+        
+        try:
+            resp = requests.get(url, params=params, timeout=30)
+            resp.raise_for_status()
+            raw = resp.json()
+            
+            if not isinstance(raw, list):
+                logger.warning("fetch_taker_buy_sell_vol %s %s: invalid response format: %s", symbol, period, type(raw))
+                return []
+            
+            if not raw:
+                logger.debug("fetch_taker_buy_sell_vol %s %s: empty response", symbol, period)
+                return []
+            
+            rows = []
+            for r in raw:
+                try:
+                    if not isinstance(r, dict) or "timestamp" not in r:
+                        logger.warning("Skipping invalid taker_buy_sell_vol row: %s", r)
+                        continue
+                    
+                    rows.append((
+                        int(r["timestamp"]),
+                        float(r.get("buySellRatio", 0.0) or 0.0),
+                        float(r.get("buyVol", 0.0) or 0.0),
+                        float(r.get("sellVol", 0.0) or 0.0),
+                        float(r.get("buyVolValue", 0.0) or 0.0),
+                        float(r.get("sellVolValue", 0.0) or 0.0),
+                    ))
+                except (ValueError, TypeError, KeyError) as e:
+                    logger.warning("Skipping invalid taker_buy_sell_vol row for %s %s: %s (error: %s)", symbol, period, r, e)
+                    continue
+            logger.debug("fetch_taker_buy_sell_vol %s %s: %s rows", symbol, period, len(rows))
+            return rows
+        except Exception as e:
+            logger.warning("fetch_taker_buy_sell_vol failed %s %s: %s", symbol, period, e, exc_info=True)
+            raise

@@ -8,6 +8,8 @@ This directory contains all project documentation organized by category.
 docs/
 ├── README.md           # This file
 ├── ARCHITECTURE.md     # System architecture and data flow
+├── plans/              # Implementation plans (SOP-aligned)
+│   └── futures-market-data-collection.md
 └── operations/         # Operation manuals and guides
     ├── README.md       # Operations index
     ├── docker-setup.md # Docker services setup guide
@@ -35,6 +37,11 @@ Practical guides for day-to-day operations:
 - **Data Integrity** - Running integrity checks and interpreting results
 
 See [Operations Manuals](operations/README.md) for details.
+
+### Plans (`plans/`)
+
+Implementation plans aligned with the [SOP: Adding New Data Table](operations/sop-add-new-data-table.md):
+- **[Futures Market Data Collection](plans/futures-market-data-collection.md)** — Basis, Global L/S Ratio, Top Trader L/S (Accounts & Positions), Taker Buy/Sell Volume
 
 ## Other Documentation
 
