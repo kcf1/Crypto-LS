@@ -58,5 +58,10 @@ class Settings:
     # Feature flags
     use_testnet: bool = False
 
+    # Futures data collection
+    open_interest_period: str = "5m"
+    funding_rate_collection_enabled: bool = True
+    liquidations_collection_enabled: bool = True
+
 
 settings = Settings()

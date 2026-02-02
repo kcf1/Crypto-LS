@@ -27,7 +27,7 @@ Browser opens at `http://localhost:8501`. Use the sidebar to pick **Symbol** and
 ## Data
 
 - Reads from **Storage** (Postgres when `DATABASE_URL` is set, else SQLite).
-- Run `scripts/download_last_24h.py` first if you have no data.
+- Run `scripts/utils/download_last_24h.py` first if you have no data.
 
 ## Later
 

@@ -2,15 +2,15 @@
 Test script: verify expected result after update_5y_5m.py has run.
 Uses settings.symbols and 5m only; storage from DATABASE_URL (Postgres) when set, else SQLite.
 Checks that each symbol has OHLCV data with row count in expected range for 5 years of 5m.
-Run from project root: python scripts/test_after_5y_5m.py
+Run from project root: python scripts/utils/test_after_5y_5m.py
 """
 
 import sys
 from pathlib import Path
 
 # Run from project root so config and data are importable
-if str(Path(__file__).resolve().parent.parent) not in sys.path:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+if str(Path(__file__).resolve().parent.parent.parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from config import settings
 from data import Storage

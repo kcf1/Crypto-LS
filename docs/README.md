@@ -7,19 +7,32 @@ This directory contains all project documentation organized by category.
 ```
 docs/
 ├── README.md           # This file
+├── ARCHITECTURE.md     # System architecture and data flow
 └── operations/         # Operation manuals and guides
     ├── README.md       # Operations index
     ├── docker-setup.md # Docker services setup guide
-    └── monitoring.md   # Monitoring and troubleshooting guide
+    ├── monitoring.md   # Monitoring and troubleshooting guide
+    └── data-integrity.md # Data integrity framework
 ```
 
 ## Documentation Categories
+
+### Architecture (`ARCHITECTURE.md`)
+
+Comprehensive system overview:
+- **Services** - Docker services and their roles
+- **Database** - Schema and data structure
+- **Data Flow** - How data moves through the system
+- **Module Architecture** - Code organization and dependencies
+- **Operations Flow** - Startup, normal operation, error handling
+- **Configuration** - Environment variables and settings
 
 ### Operations Manuals (`operations/`)
 
 Practical guides for day-to-day operations:
 - **Docker Setup** - Setting up and managing Docker services
 - **Monitoring** - Monitoring, troubleshooting, and maintenance
+- **Data Integrity** - Running integrity checks and interpreting results
 
 See [Operations Manuals](operations/README.md) for details.
 
@@ -27,6 +40,7 @@ See [Operations Manuals](operations/README.md) for details.
 
 Additional documentation located in the project:
 - **reports/README.md** - Data integrity reports documentation
+- **viz/README.md** - Streamlit visualization documentation
 
 ## Contributing
 

@@ -2,7 +2,7 @@
 Test script: verify expected result after download_last_24h.py has run.
 Uses only settings: first 10 symbols, configured timeframes; storage uses DATABASE_URL (Postgres) when set, else SQLite.
 Checks that storage has OHLCV data with row counts in expected range for 24h.
-Run from project root: python scripts/test_after_download.py
+Run from project root: python scripts/utils/test_after_download.py
 """
 
 import re
@@ -10,8 +10,8 @@ import sys
 from pathlib import Path
 
 # Run from project root so config and data are importable
-if str(Path(__file__).resolve().parent.parent) not in sys.path:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+if str(Path(__file__).resolve().parent.parent.parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from config import settings
 from data import Storage

@@ -7,7 +7,7 @@ until the next aligned time. Each task's exceptions are caught so one failure
 does not stop others. Used by the Docker data-updater service; add new sources
 in data/updates/ and register in TASKS.
 
-Run from project root: python scripts/run_data_updater.py
+Run from project root: python scripts/services/run_data_updater.py
 """
 
 import logging
@@ -16,8 +16,8 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-if str(Path(__file__).resolve().parent.parent) not in sys.path:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+if str(Path(__file__).resolve().parent.parent.parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from config import settings, setup_logging
 from data.updates import run_all

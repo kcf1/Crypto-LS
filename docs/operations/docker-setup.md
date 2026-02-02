@@ -16,7 +16,7 @@
 
 - **docker-compose.yml** – Data collection service:
   - **Container:** `crypto-ls-data-updater`
-  - **Script:** `scripts/run_data_updater.py`
+  - **Script:** `scripts/services/run_data_updater.py`
   - **Interval:** 300 seconds (5 minutes), aligned to :05, :10, :15, etc.
   - **Restart:** `unless-stopped`
   - **Depends on:** PostgreSQL (waits for healthy)

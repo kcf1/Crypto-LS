@@ -26,7 +26,7 @@ reports/integrity/
 
 ### 1. Missing Bars Check
 
-**Script:** `scripts/check_missing_bars.py`
+**Script:** `scripts/integrity/check_missing_bars.py`
 
 **Purpose:** Checks for missing 5-minute OHLCV bars in the last 48 hours.
 
@@ -51,10 +51,10 @@ reports/integrity/
 
 ```bash
 # Run missing bars check
-python scripts/check_missing_bars.py
+python scripts/integrity/check_missing_bars.py
 
 # Run all integrity checks
-python scripts/run_integrity_checks.py
+python scripts/integrity/run_integrity_checks.py
 ```
 
 ### Scheduled Execution
@@ -76,7 +76,7 @@ python scripts/run_integrity_checks.py
 crontab -e
 
 # Add line to run every 6 hours
-0 */6 * * * cd /path/to/Crypto-LS && python scripts/run_integrity_checks.py >> logs/integrity.log 2>&1
+0 */6 * * * cd /path/to/Crypto-LS && python scripts/integrity/run_integrity_checks.py >> logs/integrity.log 2>&1
 ```
 
 #### Docker
@@ -89,7 +89,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.updater
-    command: python scripts/run_integrity_checks.py
+    command: python scripts/integrity/run_integrity_checks.py
     volumes:
       - ./reports:/app/reports
     environment:
@@ -173,7 +173,7 @@ Human-readable format with:
        return 0 if result.status == "ok" else 1
    ```
 
-2. **Add to runner** (`scripts/run_integrity_checks.py`):
+2. **Add to runner** (`scripts/integrity/run_integrity_checks.py`):
    ```python
    from scripts.my_check import main as my_check_main
    

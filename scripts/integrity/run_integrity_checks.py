@@ -4,17 +4,17 @@ Run all data integrity checks.
 This script can be scheduled to run regularly (e.g., via cron or task scheduler)
 to monitor data quality.
 
-Run from project root: python scripts/run_integrity_checks.py
+Run from project root: python scripts/integrity/run_integrity_checks.py
 """
 
 import sys
 from pathlib import Path
 from datetime import datetime, timezone
 
-if str(Path(__file__).resolve().parent.parent) not in sys.path:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+if str(Path(__file__).resolve().parent.parent.parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from scripts.check_missing_bars import main as check_missing_bars_main
+from scripts.integrity.check_missing_bars import main as check_missing_bars_main
 
 
 def main() -> int:

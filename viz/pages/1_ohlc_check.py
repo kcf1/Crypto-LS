@@ -45,7 +45,7 @@ rows = storage.read_ohlcv(symbol=symbol, timeframe=timeframe)
 if not rows:
     st.warning(
         f"No OHLCV data for **{symbol}** / **{timeframe}**. "
-        "Run `scripts/download_last_24h.py` first."
+        "Run `scripts/utils/download_last_24h.py` first."
     )
     st.stop()
 

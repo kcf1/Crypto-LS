@@ -1,7 +1,7 @@
 """
 Test script: download last 24 hours of OHLCV for the first 10 symbols and configured timeframes.
 Uses data.Collector (REST) and data.Storage; writes to DATABASE_URL (Postgres) when set, else SQLite at settings.db_path.
-Run from project root: python scripts/download_last_24h.py
+Run from project root: python scripts/utils/download_last_24h.py
 """
 
 import logging
@@ -10,8 +10,8 @@ import time
 from pathlib import Path
 
 # Run from project root so config and data are importable
-if str(Path(__file__).resolve().parent.parent) not in sys.path:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+if str(Path(__file__).resolve().parent.parent.parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from config import settings, setup_logging
 from data import Collector, Storage

@@ -34,7 +34,7 @@ Checks for missing 5-minute OHLCV bars in the last 48 hours for all configured s
 
 ```bash
 # Run missing bars check
-python scripts/check_missing_bars.py
+python scripts/integrity/check_missing_bars.py
 
 # Run all integrity checks
 python scripts/run_integrity_checks.py
@@ -48,7 +48,7 @@ Add to crontab (`crontab -e`):
 
 ```bash
 # Run integrity checks every 6 hours
-0 */6 * * * cd /path/to/Crypto-LS && python scripts/run_integrity_checks.py >> logs/integrity.log 2>&1
+0 */6 * * * cd /path/to/Crypto-LS && python scripts/integrity/run_integrity_checks.py >> logs/integrity.log 2>&1
 ```
 
 #### Windows (Task Scheduler)
@@ -71,7 +71,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.updater
-    command: python scripts/run_integrity_checks.py
+    command: python scripts/integrity/run_integrity_checks.py
     volumes:
       - ./reports:/app/reports
     environment:

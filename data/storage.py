@@ -1,8 +1,8 @@
-"""Persist and query raw OHLCV data; schema and access patterns for raw series only."""
+"""Persist and query raw OHLCV and futures data; schema and access patterns for raw series only."""
 
 import logging
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
@@ -160,3 +160,183 @@ class Storage:
         with self._engine.connect() as conn:
             result = conn.execute(text(sql), params)
             return list(result.fetchall())
+
+    # Funding Rate methods
+    FUNDING_RATE_UPSERT_SQL = """
+    INSERT INTO funding_rate (symbol, funding_time, funding_rate, mark_price)
+    VALUES (:symbol, :funding_time, :funding_rate, :mark_price)
+    ON CONFLICT (symbol, funding_time) DO UPDATE SET
+      funding_rate = EXCLUDED.funding_rate, mark_price = EXCLUDED.mark_price
+    """
+
+    def write_funding_rate(
+        self,
+        symbol: str,
+        rows: Sequence[tuple],  # (funding_time, funding_rate, mark_price)
+    ) -> None:
+        """Write funding rate rows. Each row: (funding_time, funding_rate, mark_price)."""
+        if not rows:
+            return
+        with self._engine.connect() as conn:
+            try:
+                for r in rows:
+                    conn.execute(
+                        text(self.FUNDING_RATE_UPSERT_SQL),
+                        {
+                            "symbol": symbol,
+                            "funding_time": r[0],
+                            "funding_rate": r[1],
+                            "mark_price": r[2],
+                        },
+                    )
+                conn.commit()
+            except Exception as e:
+                logger.error(
+                    "write_funding_rate failed symbol=%s rows=%s: %s",
+                    symbol,
+                    len(rows),
+                    e,
+                    exc_info=True,
+                )
+                raise
+
+    def get_latest_funding_time(self, symbol: str) -> Optional[int]:
+        """Return the latest (max) funding_time for the given symbol, or None if no rows."""
+        sql = """
+            SELECT MAX(funding_time) FROM funding_rate
+            WHERE symbol = :symbol
+        """
+        with self._engine.connect() as conn:
+            result = conn.execute(text(sql), {"symbol": symbol})
+            row = result.fetchone()
+        if row is None or row[0] is None:
+            return None
+        return int(row[0])
+
+    # Open Interest methods
+    OPEN_INTEREST_UPSERT_SQL = """
+    INSERT INTO open_interest (symbol, period, timestamp, sum_open_interest, sum_open_interest_value)
+    VALUES (:symbol, :period, :timestamp, :sum_open_interest, :sum_open_interest_value)
+    ON CONFLICT (symbol, period, timestamp) DO UPDATE SET
+      sum_open_interest = EXCLUDED.sum_open_interest,
+      sum_open_interest_value = EXCLUDED.sum_open_interest_value
+    """
+
+    def write_open_interest(
+        self,
+        symbol: str,
+        period: str,
+        rows: Sequence[tuple],  # (timestamp, sum_open_interest, sum_open_interest_value)
+    ) -> None:
+        """Write open interest rows. Each row: (timestamp, sum_open_interest, sum_open_interest_value)."""
+        if not rows:
+            return
+        with self._engine.connect() as conn:
+            try:
+                for r in rows:
+                    conn.execute(
+                        text(self.OPEN_INTEREST_UPSERT_SQL),
+                        {
+                            "symbol": symbol,
+                            "period": period,
+                            "timestamp": r[0],
+                            "sum_open_interest": r[1],
+                            "sum_open_interest_value": r[2],
+                        },
+                    )
+                conn.commit()
+            except Exception as e:
+                logger.error(
+                    "write_open_interest failed symbol=%s period=%s rows=%s: %s",
+                    symbol,
+                    period,
+                    len(rows),
+                    e,
+                    exc_info=True,
+                )
+                raise
+
+    def get_latest_open_interest_time(self, symbol: str, period: str) -> Optional[int]:
+        """Return the latest (max) timestamp for the given symbol/period, or None if no rows."""
+        sql = """
+            SELECT MAX(timestamp) FROM open_interest
+            WHERE symbol = :symbol AND period = :period
+        """
+        with self._engine.connect() as conn:
+            result = conn.execute(
+                text(sql),
+                {"symbol": symbol, "period": period},
+            )
+            row = result.fetchone()
+        if row is None or row[0] is None:
+            return None
+        return int(row[0])
+
+    # Liquidations methods
+    LIQUIDATIONS_INSERT_SQL = """
+    INSERT INTO liquidations (
+        symbol, time, order_id, side, order_type, quantity, price, avg_price,
+        status, last_filled_qty, filled_accumulated_qty, trade_time
+    )
+    VALUES (
+        :symbol, :time, :order_id, :side, :order_type, :quantity, :price, :avg_price,
+        :status, :last_filled_qty, :filled_accumulated_qty, :trade_time
+    )
+    ON CONFLICT (order_id) DO NOTHING
+    """
+
+    def write_liquidations(
+        self,
+        symbol: str,
+        rows: Sequence[Dict[str, Any]],  # List of liquidation order dicts
+    ) -> None:
+        """Write liquidation orders. Handles duplicates by order_id."""
+        if not rows:
+            return
+        with self._engine.connect() as conn:
+            try:
+                for r in rows:
+                    # Binance forceOrders response fields
+                    order_id = r.get("orderId") or r.get("id", 0)
+                    time_val = r.get("time") or r.get("updateTime", 0)
+                    
+                    conn.execute(
+                        text(self.LIQUIDATIONS_INSERT_SQL),
+                        {
+                            "symbol": symbol,
+                            "time": time_val,
+                            "order_id": order_id,
+                            "side": r.get("side", ""),
+                            "order_type": r.get("type", ""),
+                            "quantity": float(r.get("origQty", 0) or r.get("quantity", 0)),
+                            "price": float(r.get("price", 0)),
+                            "avg_price": float(r.get("avgPrice", 0) or r.get("price", 0)),
+                            "status": r.get("status", ""),
+                            "last_filled_qty": float(r.get("lastFilledQty", 0) or 0),
+                            "filled_accumulated_qty": float(r.get("executedQty", 0) or r.get("cumQty", 0)),
+                            "trade_time": time_val,
+                        },
+                    )
+                conn.commit()
+            except Exception as e:
+                logger.error(
+                    "write_liquidations failed symbol=%s rows=%s: %s",
+                    symbol,
+                    len(rows),
+                    e,
+                    exc_info=True,
+                )
+                raise
+
+    def get_latest_liquidation_time(self, symbol: str) -> Optional[int]:
+        """Return the latest (max) time for the given symbol, or None if no rows."""
+        sql = """
+            SELECT MAX(time) FROM liquidations
+            WHERE symbol = :symbol
+        """
+        with self._engine.connect() as conn:
+            result = conn.execute(text(sql), {"symbol": symbol})
+            row = result.fetchone()
+        if row is None or row[0] is None:
+            return None
+        return int(row[0])

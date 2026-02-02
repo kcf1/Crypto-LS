@@ -2,7 +2,7 @@
 Check for missing 5m bars in the last 48 hours.
 Reports gaps in data collection for selected symbols.
 
-Run from project root: python scripts/check_missing_bars.py
+Run from project root: python scripts/integrity/check_missing_bars.py
 """
 
 import sys
@@ -10,8 +10,8 @@ import json
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
-if str(Path(__file__).resolve().parent.parent) not in sys.path:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+if str(Path(__file__).resolve().parent.parent.parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pandas as pd
 
@@ -276,7 +276,7 @@ def main() -> int:
     end_time_aligned = round_down_to_5min(end_time)
     
     # Setup output directory
-    project_root = Path(__file__).resolve().parent.parent
+    project_root = Path(__file__).resolve().parent.parent.parent
     output_dir = project_root / "reports" / "integrity"
     
     print(f"Checking missing 5m bars for last {HOURS_BACK} hours (UTC)")

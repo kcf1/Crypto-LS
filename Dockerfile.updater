@@ -13,4 +13,4 @@ COPY config config
 COPY data data
 COPY scripts scripts
 
-CMD ["python", "scripts/run_data_updater.py"]
+CMD ["python", "scripts/services/run_data_updater.py"]
