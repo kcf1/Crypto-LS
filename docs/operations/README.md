@@ -32,6 +32,16 @@ Data integrity checking framework and operations guide:
 - Extending the framework
 - Troubleshooting
 
+### [SOP: Adding New Data Table](sop-add-new-data-table.md)
+Standard Operating Procedure for adding new data collection tables:
+- Planning and design
+- Database migration
+- Collector and storage methods
+- Update tasks and backfill scripts
+- Testing and verification
+- Service updates
+- Complete checklist
+
 ## Quick Reference
 
 ### Start Services
