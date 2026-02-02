@@ -407,8 +407,12 @@ Set in `.env` file or Docker environment:
 - **`UPDATER_INTERVAL_SEC`**: Data collection interval in seconds
   - Default: `300` (5 minutes)
 
-- **`BINANCE_API_KEY`**: Binance API key (required for liquidations endpoint)
-- **`BINANCE_API_SECRET`**: Binance API secret (required for liquidations endpoint)
+- **`BINANCE_DATA_API_KEY`**: Binance API key for data collection (read-only, for liquidations endpoint)
+- **`BINANCE_DATA_API_SECRET`**: Binance API secret for data collection (read-only)
+- **`BINANCE_TRADING_API_KEY`**: Binance API key for trading/order management (read + trade)
+- **`BINANCE_TRADING_API_SECRET`**: Binance API secret for trading/order management
+- **`BINANCE_API_KEY`**: Legacy single API key (fallback if separate keys not set)
+- **`BINANCE_API_SECRET`**: Legacy single API secret (fallback if separate keys not set)
 - **`BINANCE_TESTNET_API_KEY`**: Testnet API key
 - **`BINANCE_TESTNET_API_SECRET`**: Testnet API secret
 

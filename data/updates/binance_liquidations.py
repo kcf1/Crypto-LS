@@ -54,8 +54,8 @@ def _fetch_force_orders_with_retry(
 
 def run() -> None:
     """One-shot Binance Liquidations incremental update."""
-    # Check if API key is available
-    if not secrets.binance_api_key or not secrets.binance_api_secret:
+    # Check if API key is available (use data collection key)
+    if not secrets.binance_data_api_key or not secrets.binance_data_api_secret:
         logger.debug("Skip liquidations: API key not configured")
         return
     

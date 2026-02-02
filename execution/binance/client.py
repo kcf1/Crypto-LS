@@ -22,8 +22,9 @@ class BinanceClient:
             key = api_key or secrets.binance_testnet_api_key
             sec = api_secret or secrets.binance_testnet_api_secret
         else:
-            key = api_key or secrets.binance_api_key
-            sec = api_secret or secrets.binance_api_secret
+            # Use trading API key for order management (falls back to legacy key)
+            key = api_key or secrets.binance_trading_api_key
+            sec = api_secret or secrets.binance_trading_api_secret
         self._client = BinanceApiClient(key, sec, testnet=use_testnet)
         self._use_testnet = use_testnet
 

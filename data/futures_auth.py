@@ -45,7 +45,7 @@ def add_auth_params(params: Dict[str, Any], api_key: Optional[str] = None, api_s
         Updated params dictionary with timestamp and signature
     """
     if not api_secret:
-        api_secret = secrets.binance_api_secret
+        api_secret = secrets.binance_data_api_secret
     
     if not api_secret:
         raise ValueError("API secret required for authenticated requests")
@@ -67,7 +67,7 @@ def get_auth_headers(api_key: Optional[str] = None) -> Dict[str, str]:
         Headers dictionary with X-MBX-APIKEY
     """
     if not api_key:
-        api_key = secrets.binance_api_key
+        api_key = secrets.binance_data_api_key
     
     if not api_key:
         raise ValueError("API key required for authenticated requests")

@@ -64,10 +64,10 @@ def fetch_force_orders_with_retry(
 def main() -> None:
     setup_logging()
     
-    # Check if API key is available
-    if not secrets.binance_api_key or not secrets.binance_api_secret:
+    # Check if API key is available (use data collection key)
+    if not secrets.binance_data_api_key or not secrets.binance_data_api_secret:
         logger.error("API key and secret required for liquidations backfill")
-        print("ERROR: API key and secret required. Set BINANCE_API_KEY and BINANCE_API_SECRET in .env")
+        print("ERROR: API key and secret required. Set BINANCE_DATA_API_KEY and BINANCE_DATA_API_SECRET in .env")
         return
     
     symbols = settings.symbols

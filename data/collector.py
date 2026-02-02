@@ -194,7 +194,7 @@ class Collector:
         """
         from config import secrets
         
-        if not secrets.binance_api_key or not secrets.binance_api_secret:
+        if not secrets.binance_data_api_key or not secrets.binance_data_api_secret:
             raise ValueError("API key and secret required for fetch_force_orders")
         
         url = f"{self._fapi_base}/fapi/v1/forceOrders"
