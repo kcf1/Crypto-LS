@@ -6,7 +6,9 @@ General entry point: **`scripts/run_data_updater.py`** (e.g. Docker `data-update
 
 ## Implemented
 
-- **binance_ohlcv** – Binance OHLCV incremental update with tail refresh (Collector + Storage, delay + 429 retry).
+- **binance_ohlcv** – Binance Spot OHLCV incremental update with tail refresh (Collector + Storage, delay + 429 retry).
+- **binance_funding_rate** – Binance Futures funding rate incremental update (updates every 8 hours, checked every 5 minutes).
+- **binance_open_interest** – Binance Futures open interest incremental update (5m periods, ~30 days historical data available).
 
 ## Adding a new data source
 

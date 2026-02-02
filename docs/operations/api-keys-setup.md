@@ -4,14 +4,14 @@
 
 The system uses separate API keys for different purposes to improve security:
 
-- **Data Collection Keys** (`BINANCE_DATA_API_KEY` / `BINANCE_DATA_API_SECRET`): Read-only keys for data collection (liquidations)
+- **Data Collection Keys** (`BINANCE_DATA_API_KEY` / `BINANCE_DATA_API_SECRET`): Read-only keys for data collection (reserved for future use)
 - **Trading Keys** (`BINANCE_TRADING_API_KEY` / `BINANCE_TRADING_API_SECRET`): Keys with trading permissions for order management
 
 ## Setup Steps
 
 ### 1. Create API Keys in Binance
 
-#### Data Collection Key (Read-only)
+#### Data Collection Key (Read-only, Reserved for Future Use)
 1. Go to Binance API Management: https://www.binance.com/en/my/settings/api-management
 2. Create new API key with label: `Crypto-LS-Data`
 3. **Permissions:**
@@ -21,6 +21,7 @@ The system uses separate API keys for different purposes to improve security:
    - ❌ Enable Withdrawals (never enable)
 4. **IP Whitelist:** Add your data collection server IPs
 5. Copy the API Key and Secret Key
+6. **Note:** Currently not actively used. Reserved for future authenticated data collection endpoints.
 
 #### Trading Key (Read + Trade)
 1. Create another API key with label: `Crypto-LS-Trading`
@@ -37,7 +38,7 @@ The system uses separate API keys for different purposes to improve security:
 Add the keys to your `.env` file (create from `.env.example` if needed):
 
 ```env
-# Data Collection (Read-only, for liquidations data)
+# Data Collection (Read-only, reserved for future use)
 BINANCE_DATA_API_KEY=your_data_collection_api_key_here
 BINANCE_DATA_API_SECRET=your_data_collection_api_secret_here
 
@@ -63,10 +64,10 @@ docker compose up -d --build data-updater
 Check that the services are using the correct keys:
 
 ```bash
-# Check data-updater logs for liquidations collection
-docker logs crypto-ls-data-updater | grep -i liquidation
+# Check data-updater logs for data collection
+docker logs crypto-ls-data-updater
 
-# Should see successful data collection if keys are configured correctly
+# Should see successful data collection for OHLCV, funding rate, and open interest
 ```
 
 ## Security Best Practices
@@ -79,25 +80,6 @@ docker logs crypto-ls-data-updater | grep -i liquidation
 6. **Testnet for Development**: Use testnet keys for development and testing
 
 ## Troubleshooting
-
-### Liquidations Not Collecting
-
-If liquidations data is not being collected:
-
-1. **Check API keys are set:**
-   ```bash
-   # In Docker container
-   docker exec crypto-ls-data-updater env | grep BINANCE_DATA
-   ```
-
-2. **Check logs:**
-   ```bash
-   docker logs crypto-ls-data-updater | grep -i "skip liquidations\|API key"
-   ```
-
-3. **Verify key permissions:**
-   - Ensure `BINANCE_DATA_API_KEY` has "Read Info" and "Enable Futures" permissions
-   - Check IP whitelist includes your server IP
 
 ### Trading Not Working
 

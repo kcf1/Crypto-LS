@@ -14,7 +14,6 @@ from data.updates import (
     binance_ohlcv,
     binance_funding_rate,
     binance_open_interest,
-    binance_liquidations,
 )
 
 logger = logging.getLogger(__name__)
@@ -24,7 +23,6 @@ TASKS: List[tuple[str, Callable[[], None]]] = [
     ("binance_ohlcv", binance_ohlcv.run),
     ("binance_funding_rate", binance_funding_rate.run),
     ("binance_open_interest", binance_open_interest.run),
-    ("binance_liquidations", binance_liquidations.run),  # Only runs if API key available
 ]
 
 
