@@ -28,6 +28,7 @@ st.markdown(
     "- **Trend-following backtest** — EOD trend signal (fast/slow EMA), standardized, vol-matched position.\n"
     "- **Trend-following (volatility regime)** — Same as above with position scaled by rolling 1pct vol regime (lookback slider).\n"
     "- **Channel-breakout backtest** — Signal = (price - mid) / channel range × 3, 2d EMA smooth; vol-matched position.\n"
-    "- **Last week 5m OHLCV** — Plot last 7 days of 5-minute candlestick + volume data."
+    "- **Last week 5m OHLCV** — Plot last 7 days of 5-minute candlestick + volume data.\n"
+    "- **Open Interest** — Plot open interest (sum_open_interest and sum_open_interest_value) over time."
 )
 st.caption("Data from Storage (DATABASE_URL when set, else SQLite). Extensible for backtesting later.")
