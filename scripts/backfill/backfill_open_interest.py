@@ -47,7 +47,14 @@ def fetch_open_interest_with_retry(
 ) -> list:
     """
     Call collector.fetch_open_interest_hist; on 429, sleep Retry-After and retry up to MAX_429_RETRIES.
-    Also retries on empty responses (could indicate rate limiting) up to MAX_EMPTY_RETRIES.
+    Also retries on empty responses (likely rate limiting) up to MAX_EMPTY_RETRIES.
+    
+    Common failure reasons:
+    - HTTP 429: Rate limit exceeded (1000 req/5min IP limit)
+    - HTTP 418: IP banned (2min-3days, escalates on repeat offenses)
+    - Empty response: Likely rate limit
+    - HTTP 400: Invalid parameters (symbol, period, time range)
+    - Network errors: Timeout, connection failure
     """
     for attempt in range(MAX_429_RETRIES):
         try:
@@ -74,10 +81,34 @@ def fetch_open_interest_with_retry(
             
             return rows
         except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 429 and attempt < MAX_429_RETRIES - 1:
+            status_code = e.response.status_code
+            if status_code == 429 and attempt < MAX_429_RETRIES - 1:
                 retry_after = int(e.response.headers.get("Retry-After", 60))
-                logger.warning("429 rate limit, sleeping %s s (attempt %s)", retry_after, attempt + 1)
+                logger.warning("429 rate limit for %s %s, sleeping %s s (attempt %s/%s)", 
+                             symbol, period, retry_after, attempt + 1, MAX_429_RETRIES)
                 time.sleep(retry_after)
+                continue
+            elif status_code == 418:
+                logger.error("418 IP banned for %s %s - wait 2min-3days. Response: %s", 
+                           symbol, period, e.response.text)
+                raise Exception(f"IP banned (HTTP 418) - wait before retrying") from e
+            elif status_code == 400:
+                logger.error("400 Bad Request for %s %s - check symbol/period/time range. Response: %s", 
+                           symbol, period, e.response.text)
+                raise Exception(f"Bad Request (HTTP 400): {e.response.text}") from e
+            else:
+                logger.error("HTTP %s error for %s %s: %s", status_code, symbol, period, e.response.text)
+                raise
+        except requests.exceptions.Timeout as e:
+            logger.error("Timeout for %s %s (attempt %s/%s): %s", symbol, period, attempt + 1, MAX_429_RETRIES, e)
+            if attempt < MAX_429_RETRIES - 1:
+                time.sleep(5)  # Wait before retrying timeout
+                continue
+            raise
+        except requests.exceptions.ConnectionError as e:
+            logger.error("Connection error for %s %s (attempt %s/%s): %s", symbol, period, attempt + 1, MAX_429_RETRIES, e)
+            if attempt < MAX_429_RETRIES - 1:
+                time.sleep(5)  # Wait before retrying connection error
                 continue
             raise
     return []
@@ -86,23 +117,7 @@ def fetch_open_interest_with_retry(
 def main() -> None:
     setup_logging()
     
-    # Wait 60 minutes before starting backfill
-    WAIT_MINUTES = 60
-    WAIT_SECONDS = WAIT_MINUTES * 60
-    
-    print(f"Waiting {WAIT_MINUTES} minutes before starting backfill...")
-    print("Press Ctrl+C to cancel and start immediately\n")
-    
-    try:
-        # Show progress bar for 60 minutes (update every second)
-        with tqdm(total=WAIT_SECONDS, desc="Waiting", unit="s", ncols=100, bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}s [{elapsed}<{remaining}]") as pbar:
-            for _ in range(WAIT_SECONDS):
-                time.sleep(1)
-                pbar.update(1)
-    except KeyboardInterrupt:
-        print("\n\nStarting backfill immediately (wait cancelled)")
-    
-    print("\nStarting open interest backfill...\n")
+    print("Starting open interest backfill...\n")
     
     symbols = settings.symbols
     end_time_ms = int(time.time() * 1000)
