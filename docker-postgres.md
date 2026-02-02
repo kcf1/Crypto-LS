@@ -1,6 +1,8 @@
-# Docker PostgreSQL – Manual Summary
+# Docker Setup – Manual Summary
 
-## Created
+## Services
+
+### PostgreSQL
 
 - **docker-compose.yml** – Postgres 16 Alpine service:
   - **User:** `crypto`
@@ -9,6 +11,16 @@
   - **Port:** `5432`
   - **Volume:** `postgres_data` for persistence
   - **Healthcheck:** `pg_isready` every 5s
+
+### Data Updater
+
+- **docker-compose.yml** – Data collection service:
+  - **Container:** `crypto-ls-data-updater`
+  - **Script:** `scripts/run_data_updater.py`
+  - **Interval:** 300 seconds (5 minutes), aligned to :05, :10, :15, etc.
+  - **Restart:** `unless-stopped`
+  - **Depends on:** PostgreSQL (waits for healthy)
+  - **Environment:** `DATABASE_URL` set automatically to connect to postgres service
 
 ## Start / Stop
 
@@ -52,5 +64,29 @@ alembic upgrade head
 
 ## Container & Network
 
-- **Containers:** `crypto-ls-postgres`, `crypto-ls-pgadmin`
+- **Containers:** `crypto-ls-postgres`, `crypto-ls-pgadmin`, `crypto-ls-data-updater`
 - **Network:** `crypto-ls_default`
+
+## Data Updater Service
+
+The `data-updater` service runs continuously and collects OHLCV data from Binance every 5 minutes, aligned to minute marks (:05, :10, :15, etc.).
+
+**View logs:**
+```bash
+docker logs -f crypto-ls-data-updater
+```
+
+**Restart the updater:**
+```bash
+docker compose restart data-updater
+```
+
+**Stop the updater (keep postgres running):**
+```bash
+docker compose stop data-updater
+```
+
+**Start only the updater:**
+```bash
+docker compose up -d data-updater
+```

@@ -1,4 +1,4 @@
-# Data updater service: runs run_data_updater at fixed interval.
+# Data updater service: runs run_data_updater at fixed interval aligned to 5-minute marks.
 # Build: docker build -f Dockerfile.updater -t crypto-ls-updater .
 # Or use docker-compose: service data-updater builds this.
 
