@@ -15,6 +15,10 @@ if str(Path(__file__).resolve().parent.parent.parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from scripts.integrity.check_missing_bars import main as check_missing_bars_main
+from scripts.integrity.check_missing_basis import main as check_missing_basis_main
+from scripts.integrity.check_missing_global_long_short_account import main as check_missing_global_long_short_account_main
+from scripts.integrity.check_missing_top_long_short_account import main as check_missing_top_long_short_account_main
+from scripts.integrity.check_missing_top_long_short_position import main as check_missing_top_long_short_position_main
 
 
 def main() -> int:
@@ -34,13 +38,26 @@ def main() -> int:
     exit_codes.append(exit_code)
     print()
     
-    # Add more checks here as they are implemented
-    # Example:
-    # print("Running: Data Freshness Check")
-    # print("-" * 80)
-    # exit_code = check_data_freshness_main()
-    # exit_codes.append(exit_code)
-    # print()
+    # Futures market data (5m)
+    print("Running: Missing Basis Check")
+    print("-" * 80)
+    exit_codes.append(check_missing_basis_main())
+    print()
+    
+    print("Running: Missing Global Long/Short Account Check")
+    print("-" * 80)
+    exit_codes.append(check_missing_global_long_short_account_main())
+    print()
+    
+    print("Running: Missing Top Long/Short Account Check")
+    print("-" * 80)
+    exit_codes.append(check_missing_top_long_short_account_main())
+    print()
+    
+    print("Running: Missing Top Long/Short Position Check")
+    print("-" * 80)
+    exit_codes.append(check_missing_top_long_short_position_main())
+    print()
     
     # Summary
     print("=" * 80)

@@ -1,6 +1,6 @@
 # Plan: Futures Market Data Collection
 
-This plan follows the [SOP: Adding New Data Table](../operations/sop-add-new-data-table.md) to add five new Binance Futures market data types: **Basis**, **Global Long/Short Ratio (Accounts)**, **Top Trader Long/Short Ratio (Accounts)**, **Top Trader Long/Short Ratio (Positions)**, and **Taker Buy/Sell Volume**.
+This plan follows the [SOP: Adding New Data Table](../operations/sop-add-new-data-table.md) to add four new Binance Futures market data types: **Basis**, **Global Long/Short Ratio (Accounts)**, **Top Trader Long/Short Ratio (Accounts)**, and **Top Trader Long/Short Ratio (Positions)**. (Taker Buy/Sell Volume is Coin-M only, not USDT-M; dropped.)
 
 **Data retention:** All endpoints expose only the **last 30 days** of data.
 
@@ -14,7 +14,6 @@ This plan follows the [SOP: Adding New Data Table](../operations/sop-add-new-dat
 | Global L/S (Accounts) | `/futures/data/globalLongShortAccountRatio` | 5m–1d | (symbol, period, timestamp) | Per period |
 | Top Trader L/S (Accounts) | `/futures/data/topLongShortAccountRatio` | 5m–1d | (symbol, period, timestamp) | Per period |
 | Top Trader L/S (Positions) | `/futures/data/topLongShortPositionRatio` | 5m–1d | (symbol, period, timestamp) | Per period |
-| Taker Buy/Sell Volume | `/futures/data/takerBuySellVol` | 5m–1d | (symbol, period, timestamp) | Per period |
 
 ---
 
@@ -54,14 +53,6 @@ This plan follows the [SOP: Adding New Data Table](../operations/sop-add-new-dat
 - **Schema:** `top_long_short_position(symbol, period, timestamp, long_short_ratio, long_position, short_position)`; PK `(symbol, period, timestamp)`
 - **Strategy:** Same as Basis
 
-### 1.5 Taker Buy/Sell Volume
-
-- **API:** `GET {fapi_base}/futures/data/takerBuySellVol`
-- **Params:** For USDT-M use `symbol`; also `period`, `limit`, optional `startTime`, `endTime`. (Coin-M uses `pair` + `contractType`.)
-- **Response:** `timestamp`, `symbol`, `buySellRatio`, `buyVol`, `sellVol`, `buyVolValue`, `sellVolValue`
-- **Schema:** `taker_buy_sell_vol(symbol, period, timestamp, buy_sell_ratio, buy_vol, sell_vol, buy_vol_value, sell_vol_value)`; PK `(symbol, period, timestamp)`
-- **Strategy:** Same as Basis
-
 ---
 
 ## Step 2: Database Migration
@@ -73,7 +64,6 @@ This plan follows the [SOP: Adding New Data Table](../operations/sop-add-new-dat
   2. `global_long_short_account` — symbol, period, timestamp, long_short_ratio, long_account, short_account
   3. `top_long_short_account` — symbol, period, timestamp, long_short_ratio, long_account, short_account
   4. `top_long_short_position` — symbol, period, timestamp, long_short_ratio, long_position, short_position
-  5. `taker_buy_sell_vol` — symbol, period, timestamp, buy_sell_ratio, buy_vol, sell_vol, buy_vol_value, sell_vol_value
 - **Indexes:** `(symbol, period)` for each table for read queries.
 - **Run:** `alembic upgrade head`
 
@@ -81,7 +71,7 @@ This plan follows the [SOP: Adding New Data Table](../operations/sop-add-new-dat
 
 ## Step 3: Collector Methods (`data/collector.py`)
 
-Add five methods; base URL: `self._fapi_base + "/futures/data/"`.
+Add four methods; base URL: `self._fapi_base + "/futures/data/"`.
 
 | Method | URL path | Returns (tuple) |
 |--------|----------|------------------|
@@ -89,7 +79,6 @@ Add five methods; base URL: `self._fapi_base + "/futures/data/"`.
 | `fetch_global_long_short_account` | `globalLongShortAccountRatio` | (timestamp, long_short_ratio, long_account, short_account) |
 | `fetch_top_long_short_account` | `topLongShortAccountRatio` | (timestamp, long_short_ratio, long_account, short_account) |
 | `fetch_top_long_short_position` | `topLongShortPositionRatio` | (timestamp, long_short_ratio, long_position, short_position) |
-| `fetch_taker_buy_sell_vol` | `takerBuySellVol` | (timestamp, buy_sell_ratio, buy_vol, sell_vol, buy_vol_value, sell_vol_value) |
 
 - **Basis:** use `pair` + `contractType=PERPETUAL`; map `symbol` in code if API returns pair.
 - **Common:** `symbol` (or pair for basis), `period`, `start_time`, `end_time`, `limit`; parse JSON; return list of tuples; handle empty/invalid response and 429 (raise or retry in task layer).
@@ -99,7 +88,7 @@ Add five methods; base URL: `self._fapi_base + "/futures/data/"`.
 
 ## Step 4: Storage Methods (`data/storage.py`)
 
-For each of the five data types:
+For each of the four data types:
 
 - **Write:** `write_basis(symbol, period, rows)`, `write_global_long_short_account(...)`, etc. Use `ON CONFLICT (symbol, period, timestamp) DO UPDATE SET ...` (or equivalent) for upsert.
 - **Read:** `read_basis(symbol, period, start_time, end_time)` → list of tuples; same for the other four.
@@ -111,13 +100,12 @@ Define SQL constants and use parameterized queries; follow existing `write_open_
 
 ## Step 5: Update Tasks (`data/updates/`)
 
-Create five task modules:
+Create four task modules:
 
 - `binance_basis.py`
 - `binance_global_long_short_account.py`
 - `binance_top_long_short_account.py`
 - `binance_top_long_short_position.py`
-- `binance_taker_buy_sell_vol.py`
 
 Each task:
 
@@ -131,13 +119,12 @@ Each task:
 
 ## Step 6: Register Tasks (`data/updates/__init__.py`)
 
-- Import the five new task modules.
+- Import the four new task modules.
 - Append to `TASKS`:  
   `("binance_basis", binance_basis.run)`,  
   `("binance_global_long_short_account", ...)`,  
   `("binance_top_long_short_account", ...)`,  
-  `("binance_top_long_short_position", ...)`,  
-  `("binance_taker_buy_sell_vol", ...)`.
+  `("binance_top_long_short_position", ...)`.
 
 ---
 
@@ -149,7 +136,6 @@ Create under `scripts/backfill/`:
 - `test_backfill_global_long_short_account.py`
 - `test_backfill_top_long_short_account.py`
 - `test_backfill_top_long_short_position.py`
-- `test_backfill_taker_buy_sell_vol.py`
 
 Each script:
 
@@ -169,7 +155,6 @@ Create under `scripts/backfill/`:
 - `backfill_global_long_short_account.py`
 - `backfill_top_long_short_account.py`
 - `backfill_top_long_short_position.py`
-- `backfill_taker_buy_sell_vol.py`
 
 Each script:
 
@@ -183,14 +168,13 @@ Each script:
 ## Step 9: Test Run and Data Verification (SOP 9.4–9.5)
 
 - **Run test scripts:**  
-  `python scripts/backfill/test_backfill_basis.py` (and the other four).
+  `python scripts/backfill/test_backfill_basis.py` (and the other three).
 - **Verify:** DB row counts, time range, no duplicate (symbol, period, timestamp); spot-check values vs API.
 - **Integrity check scripts:** Add under `scripts/integrity/`:
   - `check_missing_basis.py`
   - `check_missing_global_long_short_account.py`
   - `check_missing_top_long_short_account.py`
   - `check_missing_top_long_short_position.py`
-  - `check_missing_taker_buy_sell_vol.py`
 - Each integrity script: generate expected timestamps for last 30 days (or 7 for quick check) from period; compare with stored data; output missing count, coverage %, and gaps; write report to `reports/integrity/` (e.g. JSON).
 
 ---
@@ -205,7 +189,7 @@ Each script:
 
 ## Step 11: Full Backfill (All Symbols)
 
-- Run all five backfill scripts.
+- Run all four backfill scripts.
 - Monitor logs and rate limits.
 - Run all five integrity checks and fix any gaps (e.g. re-run backfill for affected symbols).
 
@@ -215,13 +199,13 @@ Each script:
 
 - Rebuild: `docker compose build data-updater`
 - Restart: `docker compose up -d --force-recreate data-updater`
-- Verify: `docker compose ps` and logs; confirm all five tasks run on schedule and write data.
+- Verify: `docker compose ps` and logs; confirm all four tasks run on schedule and write data.
 
 ---
 
 ## Step 13: Visualization (Optional)
 
-Add Streamlit pages under `viz/pages/` (e.g. `10_basis.py`, `11_global_long_short_account.py`, …). Each page:
+Add Streamlit pages under `viz/pages/` (e.g. `10_basis.py`, `11_global_long_short_account.py`, …; four pages). Each page:
 
 - Symbol and period selector; time range (e.g. last 7–30 days).
 - Load via corresponding `storage.read_*`.
@@ -233,27 +217,27 @@ Add Streamlit pages under `viz/pages/` (e.g. `10_basis.py`, `11_global_long_shor
 
 ## Step 14: Documentation
 
-- **ARCHITECTURE.md:** Add the five tables and tasks to Database and Data Flow sections; mention 30-day retention.
-- **data/updates/README.md:** List the five new tasks.
-- **reports/README.md:** Document the five new integrity report types if added.
+- **ARCHITECTURE.md:** Add the four tables and tasks to Database and Data Flow sections; mention 30-day retention.
+- **data/updates/README.md:** List the four new tasks.
+- **reports/README.md:** Document the four new integrity report types if added.
 
 ---
 
 ## Checklist (SOP-Aligned)
 
-- [ ] **Planning** — API, schema, and strategy defined for all five (above).
-- [ ] **Database** — Migration 003 created and applied; indexes in place.
-- [ ] **Collector** — Five fetch methods implemented and tested.
-- [ ] **Storage** — Five write/read/get_latest methods implemented and tested.
-- [ ] **Update tasks** — Five task files created and registered.
-- [ ] **Test scripts** — Five test backfill scripts (first 10 symbols, 7 days).
-- [ ] **Backfill scripts** — Five full backfill scripts (all symbols, 30 days).
+- [ ] **Planning** — API, schema, and strategy defined for all four (above).
+- [ ] **Database** — Migration 003 created and applied; migration 004 drops taker_buy_sell_vol; indexes in place.
+- [ ] **Collector** — Four fetch methods implemented and tested.
+- [ ] **Storage** — Four write/read/get_latest methods implemented and tested.
+- [ ] **Update tasks** — Four task files created and registered.
+- [ ] **Test scripts** — Four test backfill scripts (first 10 symbols, 7 days).
+- [ ] **Backfill scripts** — Four full backfill scripts (all symbols, 30 days).
 - [ ] **Test run** — All test scripts run; DB and integrity checks pass.
-- [ ] **Integrity scripts** — Five check_missing_* scripts; reports produced.
+- [ ] **Integrity scripts** — Four check_missing_* scripts; reports produced.
 - [ ] **Script testing** — Collector, storage, and task tests done.
-- [ ] **Full backfill** — All five backfills run; integrity reports reviewed.
+- [ ] **Full backfill** — All four backfills run; integrity reports reviewed.
 - [ ] **Service** — Data-updater rebuilt and restarted; tasks running.
-- [ ] **Viz** — Optional: five Streamlit pages added and tested.
+- [ ] **Viz** — Optional: four Streamlit pages added and tested.
 - [ ] **Docs** — ARCHITECTURE, data/updates/README, reports/README updated.
 
 ---
@@ -262,15 +246,15 @@ Add Streamlit pages under `viz/pages/` (e.g. `10_basis.py`, `11_global_long_shor
 
 | Category | Files to create/update |
 |----------|-------------------------|
-| Migration | `alembic/versions/003_add_futures_market_data.py` |
-| Collector | `data/collector.py` (add 5 methods) |
-| Storage | `data/storage.py` (add 5×3 methods + SQL) |
-| Tasks | `data/updates/binance_basis.py`, `binance_global_long_short_account.py`, `binance_top_long_short_account.py`, `binance_top_long_short_position.py`, `binance_taker_buy_sell_vol.py` |
+| Migration | `alembic/versions/003_add_futures_market_data.py`, `004_drop_taker_buy_sell_vol.py` |
+| Collector | `data/collector.py` (add 4 methods) |
+| Storage | `data/storage.py` (add 4×3 methods + SQL) |
+| Tasks | `data/updates/binance_basis.py`, `binance_global_long_short_account.py`, `binance_top_long_short_account.py`, `binance_top_long_short_position.py` |
 | Registry | `data/updates/__init__.py` |
-| Test backfill | `scripts/backfill/test_backfill_basis.py` (+ 4) |
-| Backfill | `scripts/backfill/backfill_basis.py` (+ 4) |
-| Integrity | `scripts/integrity/check_missing_basis.py` (+ 4) |
-| Viz | `viz/pages/10_basis.py` (+ 4 optional), `viz/app.py` |
+| Test backfill | `scripts/backfill/test_backfill_basis.py` (+ 3) |
+| Backfill | `scripts/backfill/backfill_basis.py` (+ 3) |
+| Integrity | `scripts/integrity/check_missing_basis.py` (+ 3) |
+| Viz | `viz/pages/10_basis.py` (+ 3 optional), `viz/app.py` |
 | Docs | `docs/ARCHITECTURE.md`, `data/updates/README.md`, `reports/README.md` |
 
 This plan is ready to implement step-by-step following the SOP.

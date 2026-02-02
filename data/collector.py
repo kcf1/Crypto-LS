@@ -518,11 +518,14 @@ class Collector:
                         logger.warning("Skipping invalid top_long_short_position row: %s", r)
                         continue
                     
+                    # USDS-M API returns longAccount/shortAccount (not longPosition/shortPosition)
+                    long_pct = r.get("longAccount") or r.get("longPosition") or 0.0
+                    short_pct = r.get("shortAccount") or r.get("shortPosition") or 0.0
                     rows.append((
                         int(r["timestamp"]),
                         float(r.get("longShortRatio", 0.0) or 0.0),
-                        float(r.get("longPosition", 0.0) or 0.0),
-                        float(r.get("shortPosition", 0.0) or 0.0),
+                        float(long_pct),
+                        float(short_pct),
                     ))
                 except (ValueError, TypeError, KeyError) as e:
                     logger.warning("Skipping invalid top_long_short_position row for %s %s: %s (error: %s)", symbol, period, r, e)
@@ -531,64 +534,4 @@ class Collector:
             return rows
         except Exception as e:
             logger.warning("fetch_top_long_short_position failed %s %s: %s", symbol, period, e, exc_info=True)
-            raise
-
-    def fetch_taker_buy_sell_vol(
-        self,
-        symbol: str,
-        period: str,
-        start_time: Optional[int] = None,
-        end_time: Optional[int] = None,
-        limit: Optional[int] = None,
-    ) -> List[tuple]:
-        """
-        Fetch taker buy/sell volume from Binance Futures API.
-        Returns list of tuples: (timestamp, buy_sell_ratio, buy_vol, sell_vol, buy_vol_value, sell_vol_value).
-        """
-        url = f"{self._fapi_base}/futures/data/takerBuySellVol"
-        params: dict[str, Any] = {
-            "symbol": symbol,
-            "period": period,
-            "limit": limit or min(500, self._limit),
-        }
-        if start_time is not None:
-            params["startTime"] = start_time
-        if end_time is not None:
-            params["endTime"] = end_time
-        
-        try:
-            resp = requests.get(url, params=params, timeout=30)
-            resp.raise_for_status()
-            raw = resp.json()
-            
-            if not isinstance(raw, list):
-                logger.warning("fetch_taker_buy_sell_vol %s %s: invalid response format: %s", symbol, period, type(raw))
-                return []
-            
-            if not raw:
-                logger.debug("fetch_taker_buy_sell_vol %s %s: empty response", symbol, period)
-                return []
-            
-            rows = []
-            for r in raw:
-                try:
-                    if not isinstance(r, dict) or "timestamp" not in r:
-                        logger.warning("Skipping invalid taker_buy_sell_vol row: %s", r)
-                        continue
-                    
-                    rows.append((
-                        int(r["timestamp"]),
-                        float(r.get("buySellRatio", 0.0) or 0.0),
-                        float(r.get("buyVol", 0.0) or 0.0),
-                        float(r.get("sellVol", 0.0) or 0.0),
-                        float(r.get("buyVolValue", 0.0) or 0.0),
-                        float(r.get("sellVolValue", 0.0) or 0.0),
-                    ))
-                except (ValueError, TypeError, KeyError) as e:
-                    logger.warning("Skipping invalid taker_buy_sell_vol row for %s %s: %s (error: %s)", symbol, period, r, e)
-                    continue
-            logger.debug("fetch_taker_buy_sell_vol %s %s: %s rows", symbol, period, len(rows))
-            return rows
-        except Exception as e:
-            logger.warning("fetch_taker_buy_sell_vol failed %s %s: %s", symbol, period, e, exc_info=True)
             raise

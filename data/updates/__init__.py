@@ -18,7 +18,6 @@ from data.updates import (
     binance_global_long_short_account,
     binance_top_long_short_account,
     binance_top_long_short_position,
-    binance_taker_buy_sell_vol,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,7 +31,6 @@ TASKS: List[tuple[str, Callable[[], None]]] = [
     ("binance_global_long_short_account", binance_global_long_short_account.run),
     ("binance_top_long_short_account", binance_top_long_short_account.run),
     ("binance_top_long_short_position", binance_top_long_short_position.run),
-    ("binance_taker_buy_sell_vol", binance_taker_buy_sell_vol.run),
 ]
 
 

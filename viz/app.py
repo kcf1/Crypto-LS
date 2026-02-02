@@ -30,6 +30,10 @@ st.markdown(
     "- **Channel-breakout backtest** — Signal = (price - mid) / channel range × 3, 2d EMA smooth; vol-matched position.\n"
     "- **Last week 5m OHLCV** — Plot last 7 days of 5-minute candlestick + volume data.\n"
     "- **Open Interest** — Plot open interest (sum_open_interest and sum_open_interest_value) over time.\n"
-    "- **Funding Rate** — Plot funding rate and mark price over time (updates every 8 hours)."
+    "- **Funding Rate** — Plot funding rate and mark price over time (updates every 8 hours).\n"
+    "- **Basis** — Plot basis (premium index: basis_rate, basis, futures_price, index_price) over time (5m).\n"
+    "- **Global Long/Short Account** — Plot global long/short account ratio (all traders; 5m).\n"
+    "- **Top Long/Short Account** — Plot top trader long/short account ratio (5m).\n"
+    "- **Top Long/Short Position** — Plot top trader long/short position ratio (5m)."
 )
 st.caption("Data from Storage (DATABASE_URL when set, else SQLite). Extensible for backtesting later.")
