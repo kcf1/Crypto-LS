@@ -9,12 +9,15 @@ Adding a new data table involves:
 2. **Database Schema** - Create Alembic migration
 3. **Collector Method** - Add API fetch method
 4. **Storage Methods** - Add database write/read methods
-5. **Update Task** - Create incremental update task
-6. **Register Task** - Add to task registry
-7. **Test Script** - Create test backfill for first 10 symbols
-8. **Backfill Script** - Create full backfill script
-9. **Update Service** - Rebuild and restart Docker service
-10. **Visualization** (Optional) - Create Streamlit page
+5. **Update Task** - Create incremental update task (do not register yet)
+6. **Test Script** - Create test backfill for first 10 symbols
+7. **Backfill Script** - Create full backfill script
+8. **Test Run** - Run test script, verify data, create and run integrity check, script testing
+9. **Full Backfill** - Run full backfill, verify data
+10. **Add Task to Service** - Register task so data-updater runs it (after all tests pass)
+11. **Update Docker** - Rebuild and restart data-updater container
+12. **Visualization** (Optional) - Create Streamlit page
+13. **Documentation** - Update architecture and READMEs
 
 ---
 
@@ -272,8 +275,8 @@ Binance <Data Type> incremental update task.
 
 Fetches new records after the last stored record and re-fetches the last
 N records (tail refresh) so real-time corrections from the API overwrite existing rows.
-Uses Collector + Storage + settings (delay, 429 retry). Registered in data.updates;
-the general entry point (run_data_updater.py) invokes run() at fixed interval.
+Uses Collector + Storage + settings (delay, 429 retry). Do not register in data.updates yet;
+registration is done in Step 10 (Add task to service) after all tests pass.
 """
 
 import logging
@@ -361,36 +364,9 @@ def run() -> None:
 
 ---
 
-## Step 6: Register Task
+## Step 6: Test Script (First 10 Symbols)
 
-### 6.1 Update `data/updates/__init__.py`
-
-Add import and register task:
-
-```python
-from data.updates import (
-    binance_ohlcv,
-    binance_funding_rate,
-    binance_open_interest,
-    binance_<data_type>,  # Add import
-)
-
-# Registry: (name, run) per data source; add new sources here.
-TASKS: List[tuple[str, Callable[[], None]]] = [
-    ("binance_ohlcv", binance_ohlcv.run),
-    ("binance_funding_rate", binance_funding_rate.run),
-    ("binance_open_interest", binance_open_interest.run),
-    ("binance_<data_type>", binance_<data_type>.run),  # Add task
-]
-```
-
-**Verify**: Check that the import works and task is registered.
-
----
-
-## Step 7: Test Script (First 10 Symbols)
-
-### 7.1 Create Test Backfill Script
+### 6.1 Create Test Backfill Script
 
 **File**: `scripts/backfill/test_backfill_<data_type>.py`
 
@@ -475,9 +451,9 @@ if __name__ == "__main__":
 
 ---
 
-## Step 8: Backfill Script (All Symbols)
+## Step 7: Backfill Script (All Symbols)
 
-### 8.1 Create Full Backfill Script
+### 7.1 Create Full Backfill Script
 
 **File**: `scripts/backfill/backfill_<data_type>.py`
 
@@ -556,16 +532,16 @@ if __name__ == "__main__":
 
 ---
 
-## Step 9: Test Run (First 10 Symbols)
+## Step 8: Test Run (First 10 Symbols)
 
-### 9.1 Run Test Script
+### 8.1 Run Test Script
 
 ```bash
 # From project root
 python scripts/backfill/test_backfill_<data_type>.py
 ```
 
-### 9.2 Verify Results
+### 8.2 Verify Results
 
 - **Check Logs**: Review output for errors or warnings
 - **Check Database**: Verify data was written correctly
@@ -577,18 +553,18 @@ python scripts/backfill/test_backfill_<data_type>.py
 - **Verify Data Quality**: Check for gaps, duplicates, or incorrect values
 - **Check Coverage**: Ensure expected number of records for time range
 
-### 9.3 Fix Issues
+### 8.3 Fix Issues
 
 - **Pagination Issues**: Adjust pagination logic if data is missing or duplicated
 - **Error Handling**: Improve error handling based on observed failures
 - **Rate Limits**: Adjust delays if hitting rate limits
 - **Data Parsing**: Fix parsing if data format differs from expected
 
-### 9.4 Data Verification After Download
+### 8.4 Data Verification After Download
 
 After the test script completes, verify the downloaded data:
 
-#### 9.4.1 Basic Database Checks
+#### 8.4.1 Basic Database Checks
 
 ```sql
 -- Check record counts per symbol
@@ -611,7 +587,7 @@ FROM <table_name>
 WHERE timestamp IS NULL OR symbol IS NULL;
 ```
 
-#### 9.4.2 Data Quality Checks
+#### 8.4.2 Data Quality Checks
 
 - **Time Range**: Verify data spans expected time range
 - **Record Count**: Compare expected vs actual record count
@@ -621,7 +597,7 @@ WHERE timestamp IS NULL OR symbol IS NULL;
 - **Value Ranges**: Verify numeric values are within expected ranges
 - **Data Consistency**: Compare sample records with API response
 
-#### 9.4.3 Sample Data Inspection
+#### 8.4.3 Sample Data Inspection
 
 ```python
 # Quick Python script to inspect data
@@ -644,7 +620,7 @@ df['time_diff'] = df['datetime'].diff()
 print(f"\nTime gaps:\n{df[df['time_diff'] > pd.Timedelta(hours=2)]['time_diff']}")
 ```
 
-### 9.5 Create Integrity Check Script
+### 8.5 Create Integrity Check Script
 
 Create a data integrity check script to verify data completeness and detect missing records.
 
@@ -820,7 +796,7 @@ if __name__ == "__main__":
 - Generate JSON report with summary and per-symbol details
 - Save report to `reports/integrity/` directory
 
-#### 9.5.1 Run Integrity Check
+#### 8.5.1 Run Integrity Check
 
 ```bash
 # From project root
@@ -829,11 +805,11 @@ python scripts/integrity/check_missing_<data_type>.py
 
 Review the output and JSON report to identify any missing data or gaps.
 
-### 9.6 Script Testing
+### 8.6 Script Testing
 
 Test the individual components to ensure they work correctly:
 
-#### 9.6.1 Test Collector Method
+#### 8.6.1 Test Collector Method
 
 ```python
 # Quick test script: test_collector_<data_type>.py
@@ -858,7 +834,7 @@ assert len(rows) > 0, "No data returned"
 assert len(rows[0]) == EXPECTED_FIELD_COUNT, f"Expected {EXPECTED_FIELD_COUNT} fields, got {len(rows[0])}"
 ```
 
-#### 9.6.2 Test Storage Methods
+#### 8.6.2 Test Storage Methods
 
 ```python
 # Quick test script: test_storage_<data_type>.py
@@ -884,7 +860,7 @@ assert latest is not None, "get_latest failed"
 print("All storage tests passed!")
 ```
 
-#### 9.6.3 Test Update Task
+#### 8.6.3 Test Update Task
 
 ```python
 # Quick test: manually run update task
@@ -905,9 +881,9 @@ binance_<data_type>.run()
 
 ---
 
-## Step 10: Full Backfill (All Symbols)
+## Step 9: Full Backfill (All Symbols)
 
-### 10.1 Run Full Backfill Script
+### 9.1 Run Full Backfill Script
 
 ```bash
 # From project root
@@ -920,23 +896,23 @@ python scripts/backfill/backfill_<data_type>.py
 - API rate limits
 - Network speed
 
-### 10.2 Monitor Progress
+### 9.2 Monitor Progress
 
 - Watch logs for errors
 - Check database periodically for progress
 - Monitor for rate limit issues
 
-### 10.3 Verify Completion
+### 9.3 Verify Completion
 
 - Check all symbols have data
 - Verify date ranges match expectations
 - Run data integrity checks if available
 
-### 10.4 Data Verification After Full Backfill
+### 9.4 Data Verification After Full Backfill
 
 After the full backfill completes, perform comprehensive data verification:
 
-#### 10.4.1 Run Integrity Check Script
+#### 9.4.1 Run Integrity Check Script
 
 ```bash
 # From project root
@@ -949,7 +925,7 @@ Review the report to identify:
 - Gaps in time series
 - Symbols with no data
 
-#### 10.4.2 Database Verification Queries
+#### 9.4.2 Database Verification Queries
 
 ```sql
 -- Overall statistics
@@ -981,7 +957,7 @@ GROUP BY symbol
 HAVING COUNT(*) - COUNT(DISTINCT timestamp) > 0;
 ```
 
-#### 10.4.3 Sample Verification
+#### 9.4.3 Sample Verification
 
 Select a few symbols and verify:
 - Data spans expected time range
@@ -989,7 +965,7 @@ Select a few symbols and verify:
 - No obvious gaps or anomalies
 - Values are within reasonable ranges
 
-#### 10.4.4 Fix Issues
+#### 9.4.4 Fix Issues
 
 If issues are found:
 - **Missing Data**: Re-run backfill for affected symbols
@@ -999,7 +975,32 @@ If issues are found:
 
 ---
 
-## Step 11: Update Service
+## Step 10: Add Task to Service (After All Tests)
+
+**Do this only after all tests pass** (test run, full backfill, data verification, integrity checks, script testing). Before updating Docker, ensure the new task is part of the data-updater service.
+
+### 10.1 Register Task in Service
+
+**File**: `data/updates/__init__.py`
+
+- Import the new task module: `from data.updates import ..., binance_<data_type>`
+- Append to `TASKS`: `("binance_<data_type>", binance_<data_type>.run)`
+
+Verify that the import works and the task is registered.
+
+### 10.2 Why After Tests
+
+- All tests (test backfill, full backfill, integrity checks, script testing) should pass first.
+- Adding the task to the service means the data-updater will run it on the next Docker restart.
+- Doing this after tests avoids running an untested task in the live service.
+
+### 10.3 Next Step
+
+After the task is registered, proceed to **Step 11: Update Docker** to rebuild and restart the data-updater container.
+
+---
+
+## Step 11: Update Docker
 
 ### 11.1 Rebuild Docker Container
 
@@ -1187,7 +1188,7 @@ Use this checklist to ensure all steps are completed:
   - [ ] Task file created (`data/updates/binance_<data_type>.py`)
   - [ ] Tail refresh logic implemented
   - [ ] Error handling added
-  - [ ] Task registered in `data/updates/__init__.py`
+  - [ ] (Do not register yet; registration is Step 10 after all tests)
 
 - [ ] **Test Script**
   - [ ] Test script created (`scripts/backfill/test_backfill_<data_type>.py`)
@@ -1212,7 +1213,11 @@ Use this checklist to ensure all steps are completed:
   - [ ] Data verification after full backfill completed
   - [ ] Integrity check report reviewed
 
-- [ ] **Service Update**
+- [ ] **Add Task to Service** (after all tests pass)
+  - [ ] Task registered in `data/updates/__init__.py` (or verified if added earlier)
+  - [ ] Ready to update Docker
+
+- [ ] **Update Docker**
   - [ ] Docker container rebuilt
   - [ ] Service restarted
   - [ ] Task executing correctly
