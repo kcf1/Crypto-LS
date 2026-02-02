@@ -140,6 +140,11 @@ celerybeat.pid
 # App log files (file-based logging)
 logs/
 
+# Data integrity reports (keep structure, ignore individual reports)
+reports/integrity/*.json
+reports/integrity/*.txt
+!reports/integrity/.gitkeep
+
 # Environments
 .env
 .envrc

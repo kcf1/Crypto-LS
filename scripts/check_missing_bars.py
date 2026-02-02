@@ -1,0 +1,416 @@
+"""
+Check for missing 5m bars in the last 48 hours.
+Reports gaps in data collection for selected symbols.
+
+Run from project root: python scripts/check_missing_bars.py
+"""
+
+import sys
+import json
+from pathlib import Path
+from datetime import datetime, timedelta, timezone
+
+if str(Path(__file__).resolve().parent.parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import pandas as pd
+
+from config import settings
+from data import Storage
+
+TIMEFRAME_5M = "5m"
+HOURS_BACK = 48
+BAR_INTERVAL_MINUTES = 5
+
+
+def round_down_to_5min(dt: datetime) -> datetime:
+    """Round down datetime to the nearest 5-minute boundary (e.g., 08:33 -> 08:30)."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    minutes = dt.minute
+    rounded_minutes = (minutes // BAR_INTERVAL_MINUTES) * BAR_INTERVAL_MINUTES
+    return dt.replace(minute=rounded_minutes, second=0, microsecond=0)
+
+
+def generate_expected_timestamps(start_time: datetime, end_time: datetime) -> pd.DatetimeIndex:
+    """Generate expected 5-minute timestamps between start and end (UTC, aligned to 5-min boundaries)."""
+    # Ensure UTC timezone
+    if start_time.tzinfo is None:
+        start_time = start_time.replace(tzinfo=timezone.utc)
+    if end_time.tzinfo is None:
+        end_time = end_time.replace(tzinfo=timezone.utc)
+    
+    # Round down to 5-minute boundaries
+    start_aligned = round_down_to_5min(start_time)
+    end_aligned = round_down_to_5min(end_time)
+    
+    # Generate timestamps (inclusive left, exclusive right)
+    return pd.date_range(
+        start=start_aligned,
+        end=end_aligned,
+        freq=f"{BAR_INTERVAL_MINUTES}min",
+        inclusive="left",
+        tz="UTC",
+    )
+
+
+def check_symbol(storage: Storage, symbol: str, start_time: datetime, end_time: datetime) -> dict:
+    """Check for missing bars for a single symbol. Returns report dict."""
+    # Ensure UTC timezone
+    if start_time.tzinfo is None:
+        start_time = start_time.replace(tzinfo=timezone.utc)
+    if end_time.tzinfo is None:
+        end_time = end_time.replace(tzinfo=timezone.utc)
+    
+    rows = storage.read_ohlcv(symbol=symbol, timeframe=TIMEFRAME_5M)
+    
+    if not rows:
+        return {
+            "symbol": symbol,
+            "status": "no_data",
+            "total_expected": 0,
+            "total_found": 0,
+            "missing_count": 0,
+            "coverage_pct": 0.0,
+            "gaps": [],
+        }
+    
+    df = pd.DataFrame(
+        rows,
+        columns=["open_time", "open", "high", "low", "close", "volume", "close_time"],
+    )
+    # Convert to UTC-aware datetime
+    df["datetime"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
+    
+    # Round down to 5-minute boundaries to align with expected intervals
+    # This prevents false positives for bars that haven't been collected yet
+    start_time_aligned = round_down_to_5min(start_time)
+    end_time_aligned = round_down_to_5min(end_time)
+    
+    # Filter to last 48 hours (use aligned times)
+    df_filtered = df[(df["datetime"] >= start_time_aligned) & (df["datetime"] < end_time_aligned)].copy()
+    
+    if len(df_filtered) == 0:
+        return {
+            "symbol": symbol,
+            "status": "no_recent_data",
+            "total_expected": 0,
+            "total_found": 0,
+            "missing_count": 0,
+            "coverage_pct": 0.0,
+            "gaps": [],
+            "latest_data": df["datetime"].max().isoformat() if len(df) > 0 else None,
+        }
+    
+    # Generate expected timestamps (aligned to 5-minute boundaries)
+    expected_times = generate_expected_timestamps(start_time_aligned, end_time_aligned)
+    
+    # Normalize found timestamps to 5-minute boundaries for comparison
+    # This handles any microsecond precision differences
+    found_times_normalized = set(
+        round_down_to_5min(ts.to_pydatetime()) for ts in df_filtered["datetime"]
+    )
+    
+    # Find missing bars by comparing normalized timestamps
+    missing_times = [t for t in expected_times if round_down_to_5min(t.to_pydatetime()) not in found_times_normalized]
+    
+    # Group consecutive missing bars into gaps
+    # Convert pandas Timestamps to datetime for easier manipulation
+    gaps = []
+    if missing_times:
+        # Sort missing times to ensure proper gap detection
+        missing_sorted = sorted([t.to_pydatetime() if hasattr(t, 'to_pydatetime') else t for t in missing_times])
+        
+        gap_start = missing_sorted[0]
+        gap_end = gap_start
+        
+        for i in range(1, len(missing_sorted)):
+            time_diff_seconds = (missing_sorted[i] - gap_end).total_seconds()
+            if time_diff_seconds == BAR_INTERVAL_MINUTES * 60:
+                gap_end = missing_sorted[i]
+            else:
+                # Gap ended, save it
+                duration_seconds = (gap_end - gap_start).total_seconds()
+                gaps.append({
+                    "start": gap_start.isoformat(),
+                    "end": gap_end.isoformat(),
+                    "duration_minutes": int(duration_seconds / 60) + BAR_INTERVAL_MINUTES,
+                    "missing_bars": int(duration_seconds / (BAR_INTERVAL_MINUTES * 60)) + 1,
+                })
+                gap_start = missing_sorted[i]
+                gap_end = gap_start
+        
+        # Add last gap
+        duration_seconds = (gap_end - gap_start).total_seconds()
+        gaps.append({
+            "start": gap_start.isoformat(),
+            "end": gap_end.isoformat(),
+            "duration_minutes": int(duration_seconds / 60) + BAR_INTERVAL_MINUTES,
+            "missing_bars": int(duration_seconds / (BAR_INTERVAL_MINUTES * 60)) + 1,
+        })
+    
+    total_expected = len(expected_times)
+    total_found = len(df_filtered)
+    missing_count = len(missing_times)
+    coverage_pct = (total_found / total_expected * 100) if total_expected > 0 else 0.0
+    
+    return {
+        "symbol": symbol,
+        "status": "ok" if missing_count == 0 else "missing_bars",
+        "total_expected": total_expected,
+        "total_found": total_found,
+        "missing_count": missing_count,
+        "coverage_pct": coverage_pct,
+        "gaps": gaps,
+        "earliest_data": df_filtered["datetime"].min().isoformat(),
+        "latest_data": df_filtered["datetime"].max().isoformat(),
+    }
+
+
+def save_results(
+    reports: list,
+    summary: dict,
+    start_time: datetime,
+    end_time: datetime,
+    output_dir: Path,
+) -> tuple[Path, Path]:
+    """Save results to JSON and text files. Returns paths to saved files."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Generate timestamp for filename
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    
+    # Save JSON report
+    json_data = {
+        "check_time": datetime.now(timezone.utc).isoformat(),
+        "time_range": {
+            "start": start_time.isoformat(),
+            "end": end_time.isoformat(),
+            "hours_back": HOURS_BACK,
+        },
+        "summary": summary,
+        "symbol_reports": reports,
+    }
+    
+    json_path = output_dir / f"missing_bars_{timestamp}.json"
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(json_data, f, indent=2, ensure_ascii=False)
+    
+    # Save text report
+    txt_path = output_dir / f"missing_bars_{timestamp}.txt"
+    with open(txt_path, "w", encoding="utf-8") as f:
+        f.write("=" * 80 + "\n")
+        f.write("DATA INTEGRITY CHECK REPORT\n")
+        f.write("=" * 80 + "\n\n")
+        f.write(f"Check Time: {datetime.now(timezone.utc).isoformat()} UTC\n")
+        f.write(f"Time Range: {start_time.isoformat()} → {end_time.isoformat()}\n")
+        f.write(f"Hours Back: {HOURS_BACK}\n")
+        f.write(f"Symbols Checked: {summary['total_symbols']}\n")
+        f.write("\n")
+        f.write("SUMMARY\n")
+        f.write("-" * 80 + "\n")
+        f.write(f"Total symbols checked: {summary['total_symbols']}\n")
+        f.write(f"  [OK] Complete (100%): {summary['ok_symbols']}\n")
+        f.write(f"  [!] Missing bars: {summary['missing_symbols']}\n")
+        f.write(f"  [X] No recent data: {summary['no_recent_symbols']}\n")
+        f.write(f"  [X] No data at all: {summary['no_data_symbols']}\n")
+        f.write("\n")
+        f.write(f"Overall coverage: {summary['overall_coverage']:.2f}%\n")
+        f.write(f"  Expected bars: {summary['total_expected']:,}\n")
+        f.write(f"  Found bars: {summary['total_found']:,}\n")
+        f.write(f"  Missing bars: {summary['total_missing']:,}\n")
+        f.write("\n")
+        
+        # Symbols with missing bars
+        symbols_with_gaps = [r for r in reports if r["gaps"]]
+        if symbols_with_gaps:
+            f.write("=" * 80 + "\n")
+            f.write("SYMBOLS WITH MISSING BARS\n")
+            f.write("=" * 80 + "\n\n")
+            for report in sorted(symbols_with_gaps, key=lambda x: x["missing_count"], reverse=True):
+                f.write(f"Symbol: {report['symbol']}\n")
+                f.write(f"  Coverage: {report['coverage_pct']:.2f}% ({report['total_found']}/{report['total_expected']} bars)\n")
+                f.write(f"  Missing: {report['missing_count']} bars\n")
+                f.write(f"  Data range: {report.get('earliest_data', 'N/A')} → {report.get('latest_data', 'N/A')}\n")
+                f.write(f"  Gaps: {len(report['gaps'])}\n")
+                for i, gap in enumerate(report['gaps'][:10], 1):
+                    f.write(f"    Gap {i}: {gap['start']} → {gap['end']} ({gap['duration_minutes']} min, {gap['missing_bars']} bars)\n")
+                if len(report['gaps']) > 10:
+                    f.write(f"    ... and {len(report['gaps']) - 10} more gaps\n")
+                f.write("\n")
+        
+        # Symbols with no recent data
+        no_recent = [r for r in reports if r["status"] == "no_recent_data"]
+        if no_recent:
+            f.write("=" * 80 + "\n")
+            f.write("SYMBOLS WITH NO RECENT DATA (last 48h)\n")
+            f.write("=" * 80 + "\n\n")
+            for report in no_recent:
+                latest = report.get("latest_data", "unknown")
+                f.write(f"  {report['symbol']}: Latest data at {latest}\n")
+            f.write("\n")
+        
+        # Symbols with no data
+        no_data = [r for r in reports if r["status"] == "no_data"]
+        if no_data:
+            f.write("=" * 80 + "\n")
+            f.write("SYMBOLS WITH NO DATA\n")
+            f.write("=" * 80 + "\n\n")
+            for report in no_data:
+                f.write(f"  {report['symbol']}\n")
+            f.write("\n")
+    
+    return json_path, txt_path
+
+
+def main() -> int:
+    storage = Storage()
+    symbols = settings.symbols
+    
+    # Calculate time range (all in UTC)
+    end_time = datetime.now(timezone.utc)
+    start_time = end_time - timedelta(hours=HOURS_BACK)
+    
+    # Round down to 5-minute boundaries for proper alignment
+    start_time_aligned = round_down_to_5min(start_time)
+    end_time_aligned = round_down_to_5min(end_time)
+    
+    # Setup output directory
+    project_root = Path(__file__).resolve().parent.parent
+    output_dir = project_root / "reports" / "integrity"
+    
+    print(f"Checking missing 5m bars for last {HOURS_BACK} hours (UTC)")
+    print(f"Time range: {start_time_aligned.isoformat()} → {end_time_aligned.isoformat()}")
+    print(f"Symbols to check: {len(symbols)}")
+    print("=" * 80)
+    print()
+    
+    reports = []
+    for i, symbol in enumerate(symbols, 1):
+        print(f"[{i}/{len(symbols)}] Checking {symbol}...", end=" ", flush=True)
+        report = check_symbol(storage, symbol, start_time_aligned, end_time_aligned)
+        reports.append(report)
+        
+        if report["status"] == "no_data":
+            print("[X] NO DATA")
+        elif report["status"] == "no_recent_data":
+            latest = report.get("latest_data", "unknown")
+            print(f"[!] NO RECENT DATA (latest: {latest})")
+        elif report["missing_count"] == 0:
+            print(f"[OK] ({report['total_found']} bars, {report['coverage_pct']:.1f}% coverage)")
+        else:
+            print(f"[!] MISSING {report['missing_count']} bars ({report['coverage_pct']:.1f}% coverage)")
+    
+    print()
+    print("=" * 80)
+    print("SUMMARY REPORT")
+    print("=" * 80)
+    print()
+    
+    # Summary statistics
+    total_symbols = len(reports)
+    ok_symbols = sum(1 for r in reports if r["status"] == "ok")
+    missing_symbols = sum(1 for r in reports if r["status"] == "missing_bars")
+    no_data_symbols = sum(1 for r in reports if r["status"] == "no_data")
+    no_recent_symbols = sum(1 for r in reports if r["status"] == "no_recent_data")
+    
+    total_expected = sum(r["total_expected"] for r in reports)
+    total_found = sum(r["total_found"] for r in reports)
+    total_missing = sum(r["missing_count"] for r in reports)
+    overall_coverage = (total_found / total_expected * 100) if total_expected > 0 else 0.0
+    
+    # Prepare summary for saving
+    summary = {
+        "total_symbols": total_symbols,
+        "ok_symbols": ok_symbols,
+        "missing_symbols": missing_symbols,
+        "no_recent_symbols": no_recent_symbols,
+        "no_data_symbols": no_data_symbols,
+        "total_expected": total_expected,
+        "total_found": total_found,
+        "total_missing": total_missing,
+        "overall_coverage": overall_coverage,
+    }
+    
+    print(f"Total symbols checked: {total_symbols}")
+    print(f"  [OK] Complete (100%): {ok_symbols}")
+    print(f"  [!] Missing bars: {missing_symbols}")
+    print(f"  [X] No recent data: {no_recent_symbols}")
+    print(f"  [X] No data at all: {no_data_symbols}")
+    print()
+    print(f"Overall coverage: {overall_coverage:.2f}%")
+    print(f"  Expected bars: {total_expected:,}")
+    print(f"  Found bars: {total_found:,}")
+    print(f"  Missing bars: {total_missing:,}")
+    print()
+    
+    # Detailed report for symbols with missing bars
+    symbols_with_gaps = [r for r in reports if r["gaps"]]
+    if symbols_with_gaps:
+        print("=" * 80)
+        print("SYMBOLS WITH MISSING BARS")
+        print("=" * 80)
+        print()
+        
+        for report in sorted(symbols_with_gaps, key=lambda x: x["missing_count"], reverse=True):
+            print(f"Symbol: {report['symbol']}")
+            print(f"  Coverage: {report['coverage_pct']:.2f}% ({report['total_found']}/{report['total_expected']} bars)")
+            print(f"  Missing: {report['missing_count']} bars")
+            print(f"  Data range: {report.get('earliest_data', 'N/A')} → {report.get('latest_data', 'N/A')}")
+            print(f"  Gaps: {len(report['gaps'])}")
+            
+            # Show first 5 gaps
+            for i, gap in enumerate(report['gaps'][:5], 1):
+                print(f"    Gap {i}: {gap['start']} → {gap['end']} ({gap['duration_minutes']} min, {gap['missing_bars']} bars)")
+            
+            if len(report['gaps']) > 5:
+                print(f"    ... and {len(report['gaps']) - 5} more gaps")
+            print()
+    
+    # Symbols with no recent data
+    if no_recent_symbols > 0:
+        print("=" * 80)
+        print("SYMBOLS WITH NO RECENT DATA (last 48h)")
+        print("=" * 80)
+        print()
+        
+        for report in [r for r in reports if r["status"] == "no_recent_data"]:
+            latest = report.get("latest_data", "unknown")
+            print(f"  {report['symbol']}: Latest data at {latest}")
+        print()
+    
+    # Symbols with no data at all
+    if no_data_symbols > 0:
+        print("=" * 80)
+        print("SYMBOLS WITH NO DATA")
+        print("=" * 80)
+        print()
+        
+        for report in [r for r in reports if r["status"] == "no_data"]:
+            print(f"  {report['symbol']}")
+        print()
+    
+    # Save results to files
+    json_path, txt_path = save_results(
+        reports=reports,
+        summary=summary,
+        start_time=start_time_aligned,
+        end_time=end_time_aligned,
+        output_dir=output_dir,
+    )
+    
+    print("=" * 80)
+    print("RESULTS SAVED")
+    print("=" * 80)
+    print(f"JSON report: {json_path}")
+    print(f"Text report: {txt_path}")
+    print()
+    
+    # Return exit code: 0 if all OK, 1 if any issues
+    if missing_symbols > 0 or no_recent_symbols > 0 or no_data_symbols > 0:
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

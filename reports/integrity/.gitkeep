@@ -1,0 +1,2 @@
+# This file ensures the integrity directory is tracked by git
+# Individual report files are ignored by .gitignore
