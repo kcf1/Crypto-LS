@@ -133,12 +133,24 @@ def check_symbol(storage: Storage, symbol: str, period: str, start_time: datetim
     }
 
 
-def save_results(reports: list, summary: dict, start_time: datetime, end_time: datetime, output_dir: Path) -> tuple[Path, Path]:
+def save_results(
+    reports: list,
+    summary: dict,
+    start_time: datetime,
+    end_time: datetime,
+    output_dir: Path,
+    hours_back: int | None = None,
+) -> tuple[Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    time_range = {"start": start_time.isoformat(), "end": end_time.isoformat()}
+    if hours_back is not None:
+        time_range["hours_back"] = hours_back
+    else:
+        time_range["days_back"] = DAYS_BACK
     json_data = {
         "check_time": datetime.now(timezone.utc).isoformat(),
-        "time_range": {"start": start_time.isoformat(), "end": end_time.isoformat(), "days_back": DAYS_BACK},
+        "time_range": time_range,
         "period": PERIOD,
         "interval_minutes": INTERVAL_MINUTES,
         "summary": summary,
@@ -155,7 +167,7 @@ def save_results(reports: list, summary: dict, start_time: datetime, end_time: d
         f.write("=" * 80 + "\n\n")
         f.write(f"Check Time: {datetime.now(timezone.utc).isoformat()} UTC\n")
         f.write(f"Time Range: {start_time.isoformat()} → {end_time.isoformat()}\n")
-        f.write(f"Days Back: {DAYS_BACK}\n")
+        f.write(f"Window: {hours_back} hours\n" if hours_back is not None else f"Days Back: {DAYS_BACK}\n")
         f.write(f"Period: {PERIOD} (every {INTERVAL_MINUTES} min)\n")
         f.write(f"Symbols Checked: {summary['total_symbols']}\n\n")
         f.write("SUMMARY\n" + "-" * 80 + "\n")
@@ -176,17 +188,22 @@ def save_results(reports: list, summary: dict, start_time: datetime, end_time: d
     return json_path, txt_path
 
 
-def main() -> int:
+def main(hours: int | None = None) -> int:
     storage = Storage()
     symbols = settings.symbols
     end_time = datetime.now(timezone.utc)
-    start_time = end_time - timedelta(days=DAYS_BACK)
+    if hours is not None:
+        start_time = end_time - timedelta(hours=hours)
+        window_label = f"{hours} hours"
+    else:
+        start_time = end_time - timedelta(days=DAYS_BACK)
+        window_label = f"{DAYS_BACK} days"
     start_time_aligned = round_down_to_5min(start_time)
     end_time_aligned = round_down_to_5min(end_time)
     project_root = Path(__file__).resolve().parent.parent.parent
     output_dir = project_root / "reports" / "integrity"
 
-    print(f"Checking missing basis records for last {DAYS_BACK} days (UTC)")
+    print(f"Checking missing basis records for last {window_label} (UTC)")
     print(f"Period: {PERIOD}  Time range: {start_time_aligned.isoformat()} → {end_time_aligned.isoformat()}")
     print(f"Symbols: {len(symbols)}\n" + "=" * 80)
 
@@ -228,11 +245,23 @@ def main() -> int:
         "total_missing": total_missing,
         "overall_coverage": overall,
     }
-    json_path, txt_path = save_results(reports, summary, start_time_aligned, end_time_aligned, output_dir)
+    json_path, txt_path = save_results(
+        reports, summary, start_time_aligned, end_time_aligned, output_dir, hours_back=hours
+    )
     print(f"Report: {txt_path}\nJSON: {json_path}")
 
     return 0 if (missing_sym == 0 and no_recent == 0 and no_data == 0) else 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    import argparse
+    parser = argparse.ArgumentParser(description="Check for missing basis records.")
+    parser.add_argument(
+        "--hours",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Check last N hours (e.g. 48). If omitted, uses default window.",
+    )
+    args = parser.parse_args()
+    sys.exit(main(hours=args.hours))

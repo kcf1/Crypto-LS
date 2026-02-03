@@ -176,6 +176,7 @@ def save_results(
     start_time: datetime,
     end_time: datetime,
     output_dir: Path,
+    hours_back: int | None = None,
 ) -> tuple[Path, Path]:
     """Save results to JSON and text files. Returns paths to saved files."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -183,14 +184,16 @@ def save_results(
     # Generate timestamp for filename
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     
+    time_range = {"start": start_time.isoformat(), "end": end_time.isoformat()}
+    if hours_back is not None:
+        time_range["hours_back"] = hours_back
+    else:
+        time_range["days_back"] = DAYS_BACK
+    
     # Save JSON report
     json_data = {
         "check_time": datetime.now(timezone.utc).isoformat(),
-        "time_range": {
-            "start": start_time.isoformat(),
-            "end": end_time.isoformat(),
-            "days_back": DAYS_BACK,
-        },
+        "time_range": time_range,
         "funding_interval_hours": FUNDING_INTERVAL_HOURS,
         "summary": summary,
         "symbol_reports": reports,
@@ -208,7 +211,7 @@ def save_results(
         f.write("=" * 80 + "\n\n")
         f.write(f"Check Time: {datetime.now(timezone.utc).isoformat()} UTC\n")
         f.write(f"Time Range: {start_time.isoformat()} → {end_time.isoformat()}\n")
-        f.write(f"Days Back: {DAYS_BACK}\n")
+        f.write(f"Window: {hours_back} hours\n" if hours_back is not None else f"Days Back: {DAYS_BACK}\n")
         f.write(f"Funding Interval: Every {FUNDING_INTERVAL_HOURS} hours (00:00, 08:00, 16:00 UTC)\n")
         f.write(f"Symbols Checked: {summary['total_symbols']}\n")
         f.write("\n")
@@ -248,7 +251,8 @@ def save_results(
         no_recent = [r for r in reports if r["status"] == "no_recent_data"]
         if no_recent:
             f.write("=" * 80 + "\n")
-            f.write(f"SYMBOLS WITH NO RECENT DATA (last {DAYS_BACK} days)\n")
+            window_txt = f"last {hours_back} hours" if hours_back is not None else f"last {DAYS_BACK} days"
+            f.write(f"SYMBOLS WITH NO RECENT DATA ({window_txt})\n")
             f.write("=" * 80 + "\n\n")
             for report in no_recent:
                 latest = report.get("latest_data", "unknown")
@@ -268,13 +272,18 @@ def save_results(
     return json_path, txt_path
 
 
-def main() -> int:
+def main(hours: int | None = None) -> int:
     storage = Storage()
     symbols = settings.symbols
     
     # Calculate time range (all in UTC)
     end_time = datetime.now(timezone.utc)
-    start_time = end_time - timedelta(days=DAYS_BACK)
+    if hours is not None:
+        start_time = end_time - timedelta(hours=hours)
+        window_label = f"{hours} hours"
+    else:
+        start_time = end_time - timedelta(days=DAYS_BACK)
+        window_label = f"{DAYS_BACK} days"
     
     # Round down to funding rate boundaries
     start_time_aligned = round_down_to_funding_time(start_time)
@@ -284,7 +293,7 @@ def main() -> int:
     project_root = Path(__file__).resolve().parent.parent.parent
     output_dir = project_root / "reports" / "integrity"
     
-    print(f"Checking missing funding rate records for last {DAYS_BACK} days (UTC)")
+    print(f"Checking missing funding rate records for last {window_label} (UTC)")
     print(f"Funding rate updates every {FUNDING_INTERVAL_HOURS} hours (00:00, 08:00, 16:00 UTC)")
     print(f"Time range: {start_time_aligned.isoformat()} → {end_time_aligned.isoformat()}")
     print(f"Symbols to check: {len(symbols)}")
@@ -363,7 +372,7 @@ def main() -> int:
     # Symbols with no recent data
     if no_recent_symbols > 0:
         print("=" * 80)
-        print("SYMBOLS WITH NO RECENT DATA (last 30 days)")
+        print(f"SYMBOLS WITH NO RECENT DATA (last {window_label})")
         print("=" * 80)
         print()
         
@@ -397,7 +406,7 @@ def main() -> int:
     }
     
     json_path, txt_path = save_results(
-        reports, summary, start_time_aligned, end_time_aligned, output_dir
+        reports, summary, start_time_aligned, end_time_aligned, output_dir, hours_back=hours
     )
     print(f"Report saved to: {txt_path}")
     print(f"JSON report saved to: {json_path}")

@@ -173,6 +173,7 @@ def save_results(
     start_time: datetime,
     end_time: datetime,
     output_dir: Path,
+    hours_back: int,
 ) -> tuple[Path, Path]:
     """Save results to JSON and text files. Returns paths to saved files."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -186,7 +187,7 @@ def save_results(
         "time_range": {
             "start": start_time.isoformat(),
             "end": end_time.isoformat(),
-            "hours_back": HOURS_BACK,
+            "hours_back": hours_back,
         },
         "summary": summary,
         "symbol_reports": reports,
@@ -204,7 +205,7 @@ def save_results(
         f.write("=" * 80 + "\n\n")
         f.write(f"Check Time: {datetime.now(timezone.utc).isoformat()} UTC\n")
         f.write(f"Time Range: {start_time.isoformat()} → {end_time.isoformat()}\n")
-        f.write(f"Hours Back: {HOURS_BACK}\n")
+        f.write(f"Hours Back: {hours_back}\n")
         f.write(f"Symbols Checked: {summary['total_symbols']}\n")
         f.write("\n")
         f.write("SUMMARY\n")
@@ -263,13 +264,14 @@ def save_results(
     return json_path, txt_path
 
 
-def main() -> int:
+def main(hours: int | None = None) -> int:
     storage = Storage()
     symbols = settings.symbols
-    
+    lookback_hours = hours if hours is not None else HOURS_BACK
+
     # Calculate time range (all in UTC)
     end_time = datetime.now(timezone.utc)
-    start_time = end_time - timedelta(hours=HOURS_BACK)
+    start_time = end_time - timedelta(hours=lookback_hours)
     
     # Round down to 5-minute boundaries for proper alignment
     start_time_aligned = round_down_to_5min(start_time)
@@ -279,7 +281,7 @@ def main() -> int:
     project_root = Path(__file__).resolve().parent.parent.parent
     output_dir = project_root / "reports" / "integrity"
     
-    print(f"Checking missing 5m bars for last {HOURS_BACK} hours (UTC)")
+    print(f"Checking missing 5m bars for last {lookback_hours} hours (UTC)")
     print(f"Time range: {start_time_aligned.isoformat()} → {end_time_aligned.isoformat()}")
     print(f"Symbols to check: {len(symbols)}")
     print("=" * 80)
@@ -397,6 +399,7 @@ def main() -> int:
         start_time=start_time_aligned,
         end_time=end_time_aligned,
         output_dir=output_dir,
+        hours_back=lookback_hours,
     )
     
     print("=" * 80)
