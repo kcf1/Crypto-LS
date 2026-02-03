@@ -16,7 +16,7 @@ This document describes the overall architecture, data flow, and operations of t
 
 Crypto-LS is a cryptocurrency trading system focused on:
 - **Market Data Collection**: Automated collection of OHLCV (Open, High, Low, Close, Volume) data from Binance Spot
-- **Futures Data Collection**: Automated collection of funding rates and open interest from Binance Futures
+- **Futures Data Collection**: Automated collection of funding rates, open interest, basis (premium index), and long/short ratios (global and top trader account & position) from Binance Futures
 - **Data Integrity**: Automated checks to ensure data quality and completeness
 - **Strategy Backtesting**: Streamlit-based visualization and backtesting tools
 - **Order Management**: Framework for order execution and booking (future)
@@ -53,7 +53,7 @@ The system runs three Docker services defined in `docker-compose.yml`:
 - **Interval**: 300 seconds (5 minutes), aligned to :05, :10, :15, etc.
 - **Restart Policy**: `unless-stopped`
 - **Dependencies**: Waits for PostgreSQL to be healthy
-- **Purpose**: Continuously collects OHLCV data from Binance Spot API and futures data (funding rate, open interest) from Binance Futures API
+- **Purpose**: Continuously collects OHLCV from Binance Spot and futures data (funding rate, open interest, basis, global/top long-short account & position) from Binance Futures API
 
 ### Service Startup Order
 
@@ -132,6 +132,38 @@ The database schema is managed by Alembic migrations (`alembic/versions/`).
 - **Indexes**: `ix_liquidations_symbol_time` on `(symbol, time)`, unique on `order_id`
 - **Status**: Table exists in schema but liquidations collection is disabled. Historical backfill scripts are available if needed.
 
+**Revision 003 / 004**: Futures market data tables (5m period; Binance retains ~30 days)
+
+**Basis Table** (`basis`)
+- **Purpose**: Premium index (basis) from Binance Futures
+- **Primary Key**: `(symbol, period, timestamp)`
+- **Columns**: `symbol`, `period`, `timestamp`, `basis_rate`, `basis`, `futures_price`, `index_price`
+- **Index**: `ix_basis_symbol_period` on `(symbol, period)`
+- **Update Frequency**: Every 5 minutes
+
+**Global Long/Short Account Table** (`global_long_short_account`)
+- **Purpose**: All-traders long/short account ratio (5m)
+- **Primary Key**: `(symbol, period, timestamp)`
+- **Columns**: `symbol`, `period`, `timestamp`, `long_short_ratio`, `long_account`, `short_account`
+- **Index**: `ix_global_long_short_account_symbol_period`
+- **Update Frequency**: Every 5 minutes
+
+**Top Long/Short Account Table** (`top_long_short_account`)
+- **Purpose**: Top-trader long/short account ratio (5m)
+- **Primary Key**: `(symbol, period, timestamp)`
+- **Columns**: `symbol`, `period`, `timestamp`, `long_short_ratio`, `long_account`, `short_account`
+- **Index**: `ix_top_long_short_account_symbol_period`
+- **Update Frequency**: Every 5 minutes
+
+**Top Long/Short Position Table** (`top_long_short_position`)
+- **Purpose**: Top-trader long/short position ratio (5m); USDT-M API returns longAccount/shortAccount
+- **Primary Key**: `(symbol, period, timestamp)`
+- **Columns**: `symbol`, `period`, `timestamp`, `long_short_ratio`, `long_position`, `short_position`
+- **Index**: `ix_top_long_short_position_symbol_period`
+- **Update Frequency**: Every 5 minutes
+
+**Data Retention**: All four futures market data types: only ~30 days of historical data available from Binance.
+
 ### Database Access
 
 - **Production**: PostgreSQL (via `DATABASE_URL` environment variable)
@@ -150,7 +182,11 @@ Collector (data/collector.py) - extends to Futures endpoints
 Task Registry (data/updates/__init__.py)
     ├─ Binance OHLCV Task
     ├─ Binance Funding Rate Task
-    └─ Binance Open Interest Task
+    ├─ Binance Open Interest Task
+    ├─ Binance Basis Task
+    ├─ Binance Global Long/Short Account Task
+    ├─ Binance Top Long/Short Account Task
+    └─ Binance Top Long/Short Position Task
     ↓
 Storage (data/storage.py)
     ↓
@@ -170,6 +206,10 @@ PostgreSQL Database
      - `binance_ohlcv`: Spot OHLCV data
      - `binance_funding_rate`: Futures funding rates
      - `binance_open_interest`: Futures open interest (5m periods)
+     - `binance_basis`: Futures basis / premium index (5m, ~30 days)
+     - `binance_global_long_short_account`: Futures global L/S account ratio (5m, ~30 days)
+     - `binance_top_long_short_account`: Futures top-trader L/S account ratio (5m, ~30 days)
+     - `binance_top_long_short_position`: Futures top-trader L/S position ratio (5m, ~30 days)
 
 3. **Binance OHLCV Task** (`data/updates/binance_ohlcv.py`)
    - For each symbol in `settings.symbols` (100 symbols):
@@ -197,13 +237,25 @@ PostgreSQL Database
    - Delay: 0.1 seconds between symbols
    - Note: Only ~30 days of historical data available
 
-6. **Collector** (`data/collector.py`)
+6. **Futures market data tasks** (basis, global/top long-short account & position)
+   - Each runs like open interest: get latest timestamp, fetch new + tail from Binance Futures, write via Storage
+   - Period: 5m; ~30 days historical data available
+   - Basis: `/futures/data/basis` (pair, contractType=PERPETUAL, period, limit 500; paginate forward)
+   - Global L/S account: `/futures/data/globalLongShortAccountRatio`
+   - Top L/S account: `/futures/data/topLongShortAccountRatio`
+   - Top L/S position: `/futures/data/topLongShortPositionRatio` (USDT-M returns longAccount/shortAccount)
+
+7. **Collector** (`data/collector.py`)
    - Makes HTTP requests to Binance REST APIs
    - **Spot Endpoints**:
      - `/api/v3/klines`: Returns OHLCV tuples
    - **Futures Endpoints** (USDT-Margined):
      - `/fapi/v1/fundingRate`: Returns funding rate tuples `(funding_time, funding_rate, mark_price)`
      - `/futures/data/openInterestHist`: Returns open interest tuples `(timestamp, sum_open_interest, sum_open_interest_value)`
+     - `/futures/data/basis`: Returns basis tuples `(timestamp, basis_rate, basis, futures_price, index_price)`
+     - `/futures/data/globalLongShortAccountRatio`: Returns L/S account tuples
+     - `/futures/data/topLongShortAccountRatio`: Returns top-trader L/S account tuples
+     - `/futures/data/topLongShortPositionRatio`: Returns top-trader L/S position tuples (longAccount/shortAccount)
    - Supports testnet and production
 
 8. **Storage** (`data/storage.py`)
@@ -211,6 +263,10 @@ PostgreSQL Database
    - **OHLCV methods**: `write_ohlcv()`, `get_latest_open_time()`, `read_ohlcv()`
    - **Funding Rate methods**: `write_funding_rate()`, `get_latest_funding_time()`
    - **Open Interest methods**: `write_open_interest()`, `get_latest_open_interest_time()`, `read_open_interest()`
+   - **Basis methods**: `write_basis()`, `read_basis()`, `get_latest_basis_time()`
+   - **Global L/S account methods**: `write_global_long_short_account()`, `read_global_long_short_account()`, `get_latest_global_long_short_account_time()`
+   - **Top L/S account methods**: `write_top_long_short_account()`, `read_top_long_short_account()`, `get_latest_top_long_short_account_time()`
+   - **Top L/S position methods**: `write_top_long_short_position()`, `read_top_long_short_position()`, `get_latest_top_long_short_position_time()`
    - **Liquidations methods**: `write_liquidations()`, `get_latest_liquidation_time()` (available but not actively used)
    - All write methods use ON CONFLICT UPDATE
 
@@ -234,6 +290,8 @@ Visualization & Backtesting
 - `5_trend_following_regime.py`: Trend following with volatility regime
 - `6_channel_breakout_backtest.py`: Channel breakout strategy
 - `7_last_week_5m.py`: Last week 5-minute data visualization
+- `8_open_interest.py`, `9_funding_rate.py`: Open interest and funding rate
+- `10_basis.py`, `11_global_long_short_account.py`, `12_top_long_short_account.py`, `13_top_long_short_position.py`: Futures market data (basis, L/S ratios)
 
 ### 3. Data Integrity Flow
 
@@ -248,9 +306,11 @@ Reports (reports/integrity/)
 ```
 
 **Integrity Checks**:
-- `scripts/integrity/check_missing_bars.py`: Checks for missing 5-minute bars in last 48 hours
-- Generates JSON and text reports
-- Identifies gaps, missing symbols, coverage statistics
+- `scripts/integrity/check_missing_bars.py`: Missing 5-minute bars (last 48 hours)
+- `scripts/integrity/check_missing_funding_rate.py`: Missing funding rate (last 30 days)
+- `scripts/integrity/check_missing_open_interest.py`: Missing open interest (last 7 days)
+- `scripts/integrity/check_missing_basis.py`, `check_missing_global_long_short_account.py`, `check_missing_top_long_short_account.py`, `check_missing_top_long_short_position.py`: Missing futures market data (last 7 days, 5m)
+- `scripts/integrity/run_integrity_checks.py`: Runs all checks; generates JSON and text reports in `reports/integrity/`
 
 ## Module Architecture
 
@@ -268,18 +328,20 @@ Reports (reports/integrity/)
 #### `data/`
 - **`collector.py`**: Binance API client for fetching klines and futures data
   - Spot endpoints: `/api/v3/klines`
-  - Futures endpoints: `/fapi/v1/fundingRate`, `/futures/data/openInterestHist`
+  - Futures endpoints: `/fapi/v1/fundingRate`, `/futures/data/openInterestHist`, `/futures/data/basis`, `/futures/data/globalLongShortAccountRatio`, `/futures/data/topLongShortAccountRatio`, `/futures/data/topLongShortPositionRatio`
 - **`futures_auth.py`**: Authentication helpers for Binance Futures API (HMAC-SHA256, available but not actively used)
 - **`storage.py`**: Database abstraction layer (SQLAlchemy)
   - OHLCV methods: `write_ohlcv()`, `get_latest_open_time()`, `read_ohlcv()`
   - Funding rate methods: `write_funding_rate()`, `get_latest_funding_time()`
   - Open interest methods: `write_open_interest()`, `get_latest_open_interest_time()`, `read_open_interest()`
+  - Basis, global/top L/S account & position: `write_*`, `read_*`, `get_latest_*_time()` for each
   - Liquidations methods: `write_liquidations()`, `get_latest_liquidation_time()` (available but not actively used)
 - **`updates/`**: Data update tasks
   - **`__init__.py`**: Task registry and runner
   - **`binance_ohlcv.py`**: Binance Spot OHLCV update task
   - **`binance_funding_rate.py`**: Binance Futures funding rate update task
   - **`binance_open_interest.py`**: Binance Futures open interest update task (5m periods)
+  - **`binance_basis.py`**, **`binance_global_long_short_account.py`**, **`binance_top_long_short_account.py`**, **`binance_top_long_short_position.py`**: Futures market data (5m, ~30 days)
 - **`integrity/`**: Data integrity checking framework
   - **`base.py`**: Base classes for integrity checks
 - **`streams/`**: WebSocket streaming (future use)
@@ -287,12 +349,14 @@ Reports (reports/integrity/)
 
 #### `scripts/`
 - **`run_data_updater.py`**: Main data collection scheduler (runs all registered tasks)
-- **`check_missing_bars.py`**: Missing bars integrity check
+- **`check_missing_bars.py`**, **`check_missing_funding_rate.py`**, **`check_missing_open_interest.py`**: Integrity checks
+- **`check_missing_basis.py`**, **`check_missing_global_long_short_account.py`**, **`check_missing_top_long_short_account.py`**, **`check_missing_top_long_short_position.py`**: Futures market data integrity (7 days, 5m)
 - **`run_integrity_checks.py`**: Runner for all integrity checks
 - **`download_last_24h.py`**: One-time OHLCV data download script
 - **`update_5y_5m.py`**: Historical OHLCV data backfill script (5 years, 5m)
 - **`backfill_funding_rate.py`**: Historical funding rate backfill script (5 years)
 - **`backfill_open_interest.py`**: Historical open interest backfill script (~30 days, 5m)
+- **`backfill_basis.py`**, **`backfill_global_long_short_account.py`**, **`backfill_top_long_short_account.py`**, **`backfill_top_long_short_position.py`**: Futures market data backfill (~30 days, 5m)
 - **`backfill_liquidations.py`**: Historical liquidations backfill script (7 days, requires API key, available but not actively used)
 - **`test_*.py`**: Testing and validation scripts
 
@@ -315,7 +379,8 @@ scripts/services/run_data_updater.py
 data/updates/__init__.py
     ├─ binance_ohlcv.py ──→ Collector (Spot API)
     ├─ binance_funding_rate.py ──→ Collector (Futures API)
-    └─ binance_open_interest.py ──→ Collector (Futures API)
+    ├─ binance_open_interest.py ──→ Collector (Futures API)
+    ├─ binance_basis.py, binance_global_long_short_account.py, binance_top_long_short_account.py, binance_top_long_short_position.py ──→ Collector (Futures API)
     ↓
 data/collector.py ──→ Binance Spot/Futures APIs
 data/storage.py ──→ PostgreSQL
@@ -350,6 +415,7 @@ data/storage.py ──→ PostgreSQL
      - **OHLCV Task**: Fetches new 5m bars from Spot API
      - **Funding Rate Task**: Checks for new funding rates (updates every 8h, skips if no new data)
      - **Open Interest Task**: Fetches new 5m open interest records
+     - **Basis, Global L/S Account, Top L/S Account, Top L/S Position Tasks**: Fetches new 5m futures market data (~30 days retention)
    - Each task:
      - Fetches new data from Binance
      - Writes to database

@@ -61,27 +61,30 @@ def run() -> None:
     collector = Collector(use_testnet=settings.use_testnet)
     storage = Storage()
     limit = min(500, settings.ohlcv_limit_per_request)  # Max 500 for this endpoint
+    now_ms = int(time.time() * 1000)
+    end_time_ms = now_ms + 60000  # now + 1 min so latest 5m bucket included
 
     for symbol in settings.symbols:
         latest = storage.get_latest_basis_time(symbol, PERIOD)
-        if latest is None:
-            logger.debug("Skip %s %s: no stored basis data", symbol, PERIOD)
-            continue
-        
-        # Calculate start time: latest - (TAIL_RECORDS - 1) * PERIOD_MS
-        start_time_ms = max(0, latest - (TAIL_RECORDS - 1) * PERIOD_MS)
-        
+        start_time_ms: Optional[int] = None
+        end_time_param: Optional[int] = None
+        if latest is not None:
+            # Incremental: request [latest - tail, end_time] so API returns tail + new (pass both for compatibility)
+            start_time_ms = max(0, latest - (TAIL_RECORDS - 1) * PERIOD_MS)
+            end_time_param = end_time_ms
+        # else: bootstrap with no start/end -> API returns most recent data
+
         try:
             rows = _fetch_basis_with_retry(
                 collector,
                 symbol,
                 PERIOD,
                 start_time=start_time_ms,
+                end_time=end_time_param,
                 limit=limit,
             )
             if not rows:
                 continue
-            
             storage.write_basis(symbol, PERIOD, rows)
             logger.info("%s %s: wrote %s basis records (tail refresh + new)", symbol, PERIOD, len(rows))
         except Exception as e:

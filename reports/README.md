@@ -7,12 +7,20 @@ This directory contains reports from data integrity checks.
 ```
 reports/
 ├── integrity/          # Data integrity check reports
-│   ├── missing_bars_*.json              # OHLCV bars integrity reports (JSON)
-│   ├── missing_bars_*.txt                # OHLCV bars integrity reports (text)
-│   ├── missing_funding_rate_*.json      # Funding rate integrity reports (JSON)
-│   ├── missing_funding_rate_*.txt       # Funding rate integrity reports (text)
-│   ├── missing_open_interest_*.json     # Open interest integrity reports (JSON)
-│   └── missing_open_interest_*.txt      # Open interest integrity reports (text)
+│   ├── missing_bars_*.json              # OHLCV bars integrity (JSON)
+│   ├── missing_bars_*.txt                # OHLCV bars integrity (text)
+│   ├── missing_funding_rate_*.json       # Funding rate integrity (JSON)
+│   ├── missing_funding_rate_*.txt       # Funding rate integrity (text)
+│   ├── missing_open_interest_*.json      # Open interest integrity (JSON)
+│   ├── missing_open_interest_*.txt      # Open interest integrity (text)
+│   ├── missing_basis_*.json              # Basis integrity (JSON)
+│   ├── missing_basis_*.txt               # Basis integrity (text)
+│   ├── missing_global_long_short_account_*.json
+│   ├── missing_global_long_short_account_*.txt
+│   ├── missing_top_long_short_account_*.json
+│   ├── missing_top_long_short_account_*.txt
+│   ├── missing_top_long_short_position_*.json
+│   └── missing_top_long_short_position_*.txt
 └── README.md           # This file
 ```
 
@@ -60,6 +68,30 @@ Checks for missing open interest records in the last 7 days for all configured s
 - List of symbols with no recent data
 - List of symbols with no data at all
 
+### Missing Basis Check
+
+Checks for missing basis (premium index) records in the last 7 days for all configured symbols. Basis updates every 5 minutes. Binance retains ~30 days.
+
+**Files:** `missing_basis_YYYYMMDD_HHMMSS.json`, `missing_basis_YYYYMMDD_HHMMSS.txt`
+
+### Missing Global Long/Short Account Check
+
+Checks for missing global long/short account ratio records in the last 7 days (5m period, ~30 days retention).
+
+**Files:** `missing_global_long_short_account_YYYYMMDD_HHMMSS.json`, `missing_global_long_short_account_YYYYMMDD_HHMMSS.txt`
+
+### Missing Top Long/Short Account Check
+
+Checks for missing top-trader long/short account ratio records in the last 7 days (5m period, ~30 days retention).
+
+**Files:** `missing_top_long_short_account_YYYYMMDD_HHMMSS.json`, `missing_top_long_short_account_YYYYMMDD_HHMMSS.txt`
+
+### Missing Top Long/Short Position Check
+
+Checks for missing top-trader long/short position ratio records in the last 7 days (5m period, ~30 days retention).
+
+**Files:** `missing_top_long_short_position_YYYYMMDD_HHMMSS.json`, `missing_top_long_short_position_YYYYMMDD_HHMMSS.txt`
+
 ## Running Checks
 
 ### Manual Execution
@@ -73,6 +105,12 @@ python scripts/integrity/check_missing_funding_rate.py
 
 # Run open interest check
 python scripts/integrity/check_missing_open_interest.py
+
+# Run futures market data checks (basis, global/top L/S account & position)
+python scripts/integrity/check_missing_basis.py
+python scripts/integrity/check_missing_global_long_short_account.py
+python scripts/integrity/check_missing_top_long_short_account.py
+python scripts/integrity/check_missing_top_long_short_position.py
 
 # Run all integrity checks
 python scripts/integrity/run_integrity_checks.py

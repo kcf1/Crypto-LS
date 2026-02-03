@@ -59,6 +59,13 @@ def _sleep_until_next_aligned_minute(interval_sec: int) -> None:
 
 def main() -> None:
     setup_logging()
+    # Ensure Docker sees activity: add stdout handler so docker logs shows output
+    root = logging.getLogger()
+    if not any(isinstance(h, logging.StreamHandler) for h in root.handlers):
+        sh = logging.StreamHandler(sys.stdout)
+        sh.setLevel(logging.INFO)
+        sh.setFormatter(logging.Formatter("%(asctime)s | %(levelname)-5s | %(name)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+        root.addHandler(sh)
     interval = settings.updater_interval_sec
     logger.info("Data updater started; interval=%s s (aligned to %d-minute marks)", interval, interval // 60)
     
@@ -70,7 +77,11 @@ def main() -> None:
             run_all()
         except Exception as e:
             logger.exception("run_all failed: %s", e)
-        _sleep_until_next_aligned_minute(interval)
+        try:
+            _sleep_until_next_aligned_minute(interval)
+        except Exception as e:
+            logger.exception("Sleep until next aligned minute failed: %s", e)
+            time.sleep(interval)  # fallback: wait one full interval
 
 
 if __name__ == "__main__":
