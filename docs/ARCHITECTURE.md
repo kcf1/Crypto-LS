@@ -164,6 +164,32 @@ The database schema is managed by Alembic migrations (`alembic/versions/`).
 
 **Data Retention**: All four futures market data types: only ~30 days of historical data available from Binance.
 
+**Revision 005**: Market Cap table (CoinGecko external data)
+
+**Market Cap Table** (`market_cap`)
+- **Purpose**: Stores market capitalization and related market data from CoinGecko API
+- **Primary Key**: `(symbol, timestamp)` - one record per symbol per day
+- **Columns**:
+  - `symbol` (String): Binance trading pair (e.g., "BTCUSDT")
+  - `timestamp` (BigInteger): Snapshot timestamp (milliseconds, midnight UTC)
+  - `market_cap` (Float): Market capitalization in USD
+  - `circulating_supply` (Float): Circulating supply
+  - `total_supply` (Float): Total supply
+  - `max_supply` (Float, nullable): Maximum supply
+  - `market_cap_rank` (Integer, nullable): Market cap ranking
+  - `fully_diluted_valuation` (Float, nullable): Fully diluted valuation (FDV)
+  - `current_price` (Float): Current price in USD
+  - `total_volume` (Float): 24h trading volume
+  - `high_24h` (Float, nullable): 24h high price
+  - `low_24h` (Float, nullable): 24h low price
+  - `price_change_24h` (Float, nullable): 24h price change
+  - `price_change_percentage_24h` (Float, nullable): 24h price change percentage
+  - `market_cap_change_24h` (Float, nullable): 24h market cap change
+  - `market_cap_change_percentage_24h` (Float, nullable): 24h market cap change percentage
+- **Index**: `ix_market_cap_symbol` on `symbol`
+- **Update Frequency**: Daily snapshots (once per day)
+- **Data Source**: CoinGecko API (external, not Binance)
+
 ### Database Access
 
 - **Production**: PostgreSQL (via `DATABASE_URL` environment variable)
@@ -175,10 +201,11 @@ The database schema is managed by Alembic migrations (`alembic/versions/`).
 ### 1. Data Collection Flow
 
 ```
-Binance Spot API          Binance Futures API
-    ↓                           ↓
+Binance Spot API          Binance Futures API          CoinGecko API
+    ↓                           ↓                           ↓
 Collector (data/collector.py) - extends to Futures endpoints
-    ↓                           ↓
+CoinGeckoCollector (data/coingecko_collector.py)
+    ↓                           ↓                           ↓
 Task Registry (data/updates/__init__.py)
     ├─ Binance OHLCV Task
     ├─ Binance Funding Rate Task
@@ -186,7 +213,8 @@ Task Registry (data/updates/__init__.py)
     ├─ Binance Basis Task
     ├─ Binance Global Long/Short Account Task
     ├─ Binance Top Long/Short Account Task
-    └─ Binance Top Long/Short Position Task
+    ├─ Binance Top Long/Short Position Task
+    └─ CoinGecko Market Cap Task
     ↓
 Storage (data/storage.py)
     ↓
@@ -210,6 +238,7 @@ PostgreSQL Database
      - `binance_global_long_short_account`: Futures global L/S account ratio (5m, ~30 days)
      - `binance_top_long_short_account`: Futures top-trader L/S account ratio (5m, ~30 days)
      - `binance_top_long_short_position`: Futures top-trader L/S position ratio (5m, ~30 days)
+     - `coingecko_market_cap`: Market cap data from CoinGecko (daily snapshots)
 
 3. **Binance OHLCV Task** (`data/updates/binance_ohlcv.py`)
    - For each symbol in `settings.symbols` (100 symbols):
@@ -245,8 +274,23 @@ PostgreSQL Database
    - Top L/S account: `/futures/data/topLongShortAccountRatio`
    - Top L/S position: `/futures/data/topLongShortPositionRatio` (USDT-M returns longAccount/shortAccount)
 
-7. **Collector** (`data/collector.py`)
+7. **CoinGecko Market Cap Task** (`data/updates/coingecko_market_cap.py`)
+   - Fetches current market cap data for all symbols in `settings.symbols`
+   - Uses CoinGecko `/coins/markets` endpoint with `symbols` parameter (batched, max 50 per request)
+   - Maps Binance symbols to CoinGecko symbols (e.g., BTCUSDT -> btc)
+   - Stores daily snapshot with current timestamp
+   - Update frequency: Once per day (daily snapshot)
+   - Rate limits: ~30 calls/min (free tier), uses 1 second delay between requests
+   - Writes to database via `Storage.write_market_cap()`
+
+8. **Collector** (`data/collector.py`)
    - Makes HTTP requests to Binance REST APIs
+   
+9. **CoinGeckoCollector** (`data/coingecko_collector.py`)
+   - Makes HTTP requests to CoinGecko REST API
+   - Methods: `fetch_coins_list()`, `fetch_market_cap()`, `fetch_historical_market_cap()`
+   - Handles symbol mapping (Binance -> CoinGecko)
+   - Respects rate limits with retry logic
    - **Spot Endpoints**:
      - `/api/v3/klines`: Returns OHLCV tuples
    - **Futures Endpoints** (USDT-Margined):
@@ -267,6 +311,7 @@ PostgreSQL Database
    - **Global L/S account methods**: `write_global_long_short_account()`, `read_global_long_short_account()`, `get_latest_global_long_short_account_time()`
    - **Top L/S account methods**: `write_top_long_short_account()`, `read_top_long_short_account()`, `get_latest_top_long_short_account_time()`
    - **Top L/S position methods**: `write_top_long_short_position()`, `read_top_long_short_position()`, `get_latest_top_long_short_position_time()`
+   - **Market Cap methods**: `write_market_cap()`, `read_market_cap()`, `get_latest_market_cap_time()` (CoinGecko data)
    - **Liquidations methods**: `write_liquidations()`, `get_latest_liquidation_time()` (available but not actively used)
    - All write methods use ON CONFLICT UPDATE
 

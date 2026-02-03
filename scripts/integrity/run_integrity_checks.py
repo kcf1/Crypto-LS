@@ -20,6 +20,7 @@ from scripts.integrity.check_missing_bars import main as check_missing_bars_main
 from scripts.integrity.check_missing_basis import main as check_missing_basis_main
 from scripts.integrity.check_missing_funding_rate import main as check_missing_funding_rate_main
 from scripts.integrity.check_missing_global_long_short_account import main as check_missing_global_long_short_account_main
+from scripts.integrity.check_missing_market_cap import main as check_missing_market_cap_main
 from scripts.integrity.check_missing_open_interest import main as check_missing_open_interest_main
 from scripts.integrity.check_missing_top_long_short_account import main as check_missing_top_long_short_account_main
 from scripts.integrity.check_missing_top_long_short_position import main as check_missing_top_long_short_position_main
@@ -84,6 +85,12 @@ def main() -> int:
     print("Running: Missing Top Long/Short Position Check")
     print("-" * 80)
     exit_codes.append(check_missing_top_long_short_position_main(hours=hours))
+    print()
+    
+    # Market cap (CoinGecko)
+    print("Running: Missing Market Cap Check")
+    print("-" * 80)
+    exit_codes.append(check_missing_market_cap_main(hours=hours))
     print()
     
     # Summary

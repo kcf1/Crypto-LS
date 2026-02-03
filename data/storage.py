@@ -713,3 +713,144 @@ class Storage:
         if row is None or row[0] is None:
             return None
         return int(row[0])
+
+    # Market Cap methods
+    MARKET_CAP_UPSERT_SQL = """
+    INSERT INTO market_cap (
+        symbol, timestamp, market_cap, circulating_supply, total_supply, max_supply,
+        market_cap_rank, fully_diluted_valuation, current_price, total_volume,
+        high_24h, low_24h, price_change_24h, price_change_percentage_24h,
+        market_cap_change_24h, market_cap_change_percentage_24h
+    )
+    VALUES (
+        :symbol, :timestamp, :market_cap, :circulating_supply, :total_supply, :max_supply,
+        :market_cap_rank, :fully_diluted_valuation, :current_price, :total_volume,
+        :high_24h, :low_24h, :price_change_24h, :price_change_percentage_24h,
+        :market_cap_change_24h, :market_cap_change_percentage_24h
+    )
+    ON CONFLICT (symbol, timestamp) DO UPDATE SET
+      market_cap = EXCLUDED.market_cap,
+      circulating_supply = EXCLUDED.circulating_supply,
+      total_supply = EXCLUDED.total_supply,
+      max_supply = EXCLUDED.max_supply,
+      market_cap_rank = EXCLUDED.market_cap_rank,
+      fully_diluted_valuation = EXCLUDED.fully_diluted_valuation,
+      current_price = EXCLUDED.current_price,
+      total_volume = EXCLUDED.total_volume,
+      high_24h = EXCLUDED.high_24h,
+      low_24h = EXCLUDED.low_24h,
+      price_change_24h = EXCLUDED.price_change_24h,
+      price_change_percentage_24h = EXCLUDED.price_change_percentage_24h,
+      market_cap_change_24h = EXCLUDED.market_cap_change_24h,
+      market_cap_change_percentage_24h = EXCLUDED.market_cap_change_percentage_24h
+    """
+
+    def write_market_cap(
+        self,
+        symbol: str,
+        rows: Sequence[tuple],  # (timestamp, market_cap, circulating_supply, total_supply, max_supply, market_cap_rank, fully_diluted_valuation, current_price, total_volume, high_24h, low_24h, price_change_24h, price_change_percentage_24h, market_cap_change_24h, market_cap_change_percentage_24h)
+    ) -> None:
+        """Write market cap rows."""
+        if not rows:
+            return
+        with self._engine.connect() as conn:
+            try:
+                for r in rows:
+                    conn.execute(
+                        text(self.MARKET_CAP_UPSERT_SQL),
+                        {
+                            "symbol": symbol,
+                            "timestamp": r[0],
+                            "market_cap": r[1],
+                            "circulating_supply": r[2],
+                            "total_supply": r[3],
+                            "max_supply": r[4],
+                            "market_cap_rank": r[5],
+                            "fully_diluted_valuation": r[6],
+                            "current_price": r[7],
+                            "total_volume": r[8],
+                            "high_24h": r[9],
+                            "low_24h": r[10],
+                            "price_change_24h": r[11],
+                            "price_change_percentage_24h": r[12],
+                            "market_cap_change_24h": r[13],
+                            "market_cap_change_percentage_24h": r[14],
+                        },
+                    )
+                conn.commit()
+            except Exception as e:
+                logger.error(
+                    "write_market_cap failed symbol=%s rows=%s: %s",
+                    symbol,
+                    len(rows),
+                    e,
+                    exc_info=True,
+                )
+                raise
+
+    def read_market_cap(
+        self,
+        symbol: str,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+    ) -> List[tuple]:
+        """
+        Read market cap rows for a symbol.
+        Returns list of tuples: (timestamp, market_cap, circulating_supply, total_supply, max_supply,
+                                 market_cap_rank, fully_diluted_valuation, current_price, total_volume,
+                                 high_24h, low_24h, price_change_24h, price_change_percentage_24h,
+                                 market_cap_change_24h, market_cap_change_percentage_24h).
+        """
+        sql = """
+            SELECT timestamp, market_cap, circulating_supply, total_supply, max_supply,
+                   market_cap_rank, fully_diluted_valuation, current_price, total_volume,
+                   high_24h, low_24h, price_change_24h, price_change_percentage_24h,
+                   market_cap_change_24h, market_cap_change_percentage_24h
+            FROM market_cap
+            WHERE symbol = :symbol
+        """
+        params: dict[str, Any] = {"symbol": symbol}
+        if start_time is not None:
+            sql += " AND timestamp >= :start_time"
+            params["start_time"] = start_time
+        if end_time is not None:
+            sql += " AND timestamp < :end_time"
+            params["end_time"] = end_time
+        sql += " ORDER BY timestamp ASC"
+        
+        with self._engine.connect() as conn:
+            result = conn.execute(text(sql), params)
+            rows = result.fetchall()
+        return [
+            (
+                int(r[0]),
+                float(r[1]),
+                float(r[2]),
+                float(r[3]),
+                float(r[4]) if r[4] is not None else None,
+                int(r[5]) if r[5] is not None else None,
+                float(r[6]) if r[6] is not None else None,
+                float(r[7]),
+                float(r[8]),
+                float(r[9]) if r[9] is not None else None,
+                float(r[10]) if r[10] is not None else None,
+                float(r[11]) if r[11] is not None else None,
+                float(r[12]) if r[12] is not None else None,
+                float(r[13]) if r[13] is not None else None,
+                float(r[14]) if r[14] is not None else None,
+            )
+            for r in rows
+        ]
+
+    def get_latest_market_cap_time(self, symbol: str) -> Optional[int]:
+        """Return the latest (max) timestamp for the given symbol, or None if no rows."""
+        sql = """
+            SELECT MAX(timestamp) FROM market_cap
+            WHERE symbol = :symbol
+        """
+        with self._engine.connect() as conn:
+            result = conn.execute(text(sql), {"symbol": symbol})
+            row = result.fetchone()
+        if row is None or row[0] is None:
+            return None
+        return int(row[0])

@@ -13,6 +13,7 @@ General entry point: **`scripts/run_data_updater.py`** (e.g. Docker `data-update
 - **binance_global_long_short_account** – Binance Futures global long/short account ratio (5m, ~30 days).
 - **binance_top_long_short_account** – Binance Futures top-trader long/short account ratio (5m, ~30 days).
 - **binance_top_long_short_position** – Binance Futures top-trader long/short position ratio (5m, ~30 days; USDT-M uses longAccount/shortAccount).
+- **coingecko_market_cap** – CoinGecko market capitalization data (daily snapshots, external API).
 
 ## Adding a new data source
 

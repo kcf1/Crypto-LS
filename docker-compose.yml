@@ -15,7 +15,14 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
+  # pgAdmin is memory-heavy (~200–500MB). Run only when needed:
+  #   docker compose up -d postgres data-updater
+  # To use pgAdmin: docker compose up -d
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: crypto-ls-pgadmin
@@ -26,6 +33,10 @@ services:
       - "5050:80"
     depends_on:
       - postgres
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
   data-updater:
     build:
@@ -41,6 +52,10 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 768M
 
 volumes:
   postgres_data:
