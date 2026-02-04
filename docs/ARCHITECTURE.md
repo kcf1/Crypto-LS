@@ -19,7 +19,7 @@ Crypto-LS is a cryptocurrency trading system focused on:
 - **Futures Data Collection**: Automated collection of funding rates, open interest, basis (premium index), and long/short ratios (global and top trader account & position) from Binance Futures
 - **Data Integrity**: Automated checks to ensure data quality and completeness
 - **Strategy Backtesting**: Streamlit-based visualization and backtesting tools
-- **Order Management**: Framework for order execution and booking (future)
+- **Order Management**: Framework for order execution and booking **[WIP]** — see [Booking System & Reconciliations Plan](plans/booking-system-and-recon.md)
 
 The system is containerized using Docker and uses PostgreSQL as the primary database.
 
@@ -37,7 +37,7 @@ The system runs three Docker services defined in `docker-compose.yml`:
 - **User/Password**: `crypto/crypto`
 - **Volume**: `postgres_data` (persistent storage)
 - **Health Check**: `pg_isready` every 5 seconds
-- **Purpose**: Primary data storage for OHLCV data and booking records
+- **Purpose**: Primary data storage for OHLCV data and booking records **[WIP]**
 
 #### 2. pgAdmin (`pgadmin`)
 - **Image**: `dpage/pgadmin4:latest`
@@ -409,11 +409,11 @@ Reports (reports/integrity/)
 - **`app.py`**: Streamlit main application
 - **`pages/`**: Individual Streamlit pages for visualization and backtesting
 
-#### `execution/` (Future)
+#### `execution/` **[WIP]**
 - **`binance/client.py`**: Binance execution API client
 - **`order_manager.py`**: Order management logic
 
-#### `booking/` (Future)
+#### `booking/` **[WIP]**
 - **`ledger.py`**: Order and trade booking
 
 ### Module Dependencies

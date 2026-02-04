@@ -42,6 +42,7 @@ See [Operations Manuals](operations/README.md) for details.
 
 Implementation plans aligned with the [SOP: Adding New Data Table](operations/sop-add-new-data-table.md):
 - **[Futures Market Data Collection](plans/futures-market-data-collection.md)** — Basis, Global L/S Ratio, Top Trader L/S (Accounts & Positions), Taker Buy/Sell Volume
+- **[Booking System & Reconciliations](plans/booking-system-and-recon.md)** **[WIP]** — Orders, trades, positions, balances; booking workflow; reconciliation list (order/trades/position/balance vs ledger and vs Binance)
 
 ## Other Documentation
 
