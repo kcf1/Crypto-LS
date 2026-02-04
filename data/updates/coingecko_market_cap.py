@@ -2,8 +2,8 @@
 CoinGecko Market Cap incremental update task.
 
 Fetches current market cap data for all symbols and stores daily snapshots.
-Uses CoinGeckoCollector + Storage + settings. Do not register in data.updates yet;
-registration is done after all tests pass.
+Uses CoinGeckoCollector + Storage + settings. Registered in data.updates/__init__.py.
+Runs daily (one snapshot per day per symbol, upserts on same day).
 """
 
 import logging
