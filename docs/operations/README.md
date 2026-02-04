@@ -22,6 +22,12 @@ Comprehensive monitoring and troubleshooting guide:
 - Troubleshooting common issues
 - Health checks and alerts
 
+### [Booking & Reconciliation](booking-and-recon.md) **[WIP]**
+Booking system and reconciliation operations (planned):
+- No separate balance-monitoring service; ledger updated from booked trades only
+- Fill-sync job (periodic and/or after each order); reconciliation job (e.g. daily)
+- See [Booking System & Reconciliations Plan](../plans/booking-system-and-recon.md) for full design
+
 ### [Data Integrity](data-integrity.md)
 Data integrity checking framework and operations guide:
 - Running integrity checks
