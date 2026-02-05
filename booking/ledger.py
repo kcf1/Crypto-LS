@@ -1364,7 +1364,51 @@ class Ledger:
                 {"trade_id": ledger_trade_id, "side": side.upper()},
             )
             conn.commit()
-    
+
+    def update_trade_book_id(
+        self,
+        ledger_trade_id: int,
+        new_book_id: str,
+        created_by: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> None:
+        """Reallocate a trade to another book. Records an audit row in adjustments (type=trade_reallocate).
+        Caller should rebuild positions and balances after."""
+        if not self.validate_book_id(new_book_id):
+            raise ValueError(f"Book id '{new_book_id}' does not exist or is inactive")
+        import time
+        created_at = int(time.time() * 1000)
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT id, venue, book_id FROM trades WHERE id = :trade_id"),
+                {"trade_id": ledger_trade_id},
+            ).fetchone()
+            if not row:
+                raise ValueError(f"Trade id {ledger_trade_id} not found")
+            _, venue, old_book_id = row
+            conn.execute(
+                text("UPDATE trades SET book_id = :new_book_id WHERE id = :trade_id"),
+                {"trade_id": ledger_trade_id, "new_book_id": new_book_id},
+            )
+            reason = f"reallocate from {old_book_id}"
+            conn.execute(
+                text("""
+                    INSERT INTO adjustments
+                    (venue, book_id, type, asset_or_symbol, delta_or_value, reason, created_at, created_by, record_status, notes)
+                    VALUES (:venue, :book_id, 'trade_reallocate', :asset_or_symbol, 0, :reason, :created_at, :created_by, 'VALID', :notes)
+                """),
+                {
+                    "venue": venue,
+                    "book_id": new_book_id,
+                    "asset_or_symbol": str(ledger_trade_id),
+                    "reason": reason,
+                    "created_at": created_at,
+                    "created_by": (created_by or "system").strip() or "system",
+                    "notes": notes,
+                },
+            )
+            conn.commit()
+
     def update_adjustment_record_status(
         self,
         ledger_adjustment_id: int,

@@ -617,6 +617,32 @@ def rebuild_balances_endpoint() -> Dict[str, Any]:
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/admin/trades/<int:trade_id>/reallocate", methods=["POST"])
+def reallocate_trade_endpoint(trade_id: int):
+    """Reallocate a trade to another book; record in adjustments (audit); then rebuild positions and balances."""
+    try:
+        data = request.json or {}
+        new_book_id = data.get("new_book_id")
+        if not new_book_id or not isinstance(new_book_id, str):
+            return jsonify({"error": "new_book_id (string) is required"}), 400
+        new_book_id = new_book_id.strip()
+        created_by = data.get("created_by") or "api"
+        notes = data.get("notes")
+        ledger.update_trade_book_id(trade_id, new_book_id, created_by=created_by, notes=notes)
+        rebuild_positions(ledger, book_id=None)
+        rebuild_balances(ledger, book_id=None)
+        return jsonify({
+            "message": "Trade reallocated and aggregates rebuilt",
+            "trade_id": trade_id,
+            "new_book_id": new_book_id,
+        }), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error reallocating trade: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/admin/reconciliation", methods=["GET"])
 def run_reconciliation() -> Dict[str, Any]:
     """Run reconciliation checks and return results."""

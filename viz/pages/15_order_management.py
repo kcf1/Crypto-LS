@@ -301,6 +301,31 @@ def create_adjustment(adjustment_data: Dict) -> Dict:
         return {"success": False, "error": error_msg}
 
 
+def reallocate_trade(trade_id: int, new_book_id: str, created_by: str = "gui", notes: Optional[str] = None) -> Dict:
+    """Reallocate a trade to another book via API. Records audit in adjustments."""
+    try:
+        payload = {"new_book_id": new_book_id, "created_by": created_by}
+        if notes is not None:
+            payload["notes"] = notes
+        response = requests.post(
+            f"{ORDER_EXECUTOR_URL}/admin/trades/{trade_id}/reallocate",
+            json=payload,
+            timeout=30,
+        )
+        response.raise_for_status()
+        return {"success": True, "data": response.json()}
+    except requests.exceptions.RequestException as e:
+        error_msg = str(e)
+        if hasattr(e, "response") and e.response is not None:
+            try:
+                body = e.response.json()
+                if isinstance(body.get("error"), str):
+                    error_msg = body["error"]
+            except Exception:
+                pass
+        return {"success": False, "error": error_msg}
+
+
 # Page Title
 st.title("📊 Order Management")
 st.caption("Manual order placement and testing interface for order-executor service")
@@ -314,10 +339,11 @@ if not check_service_health():
 st.success("✅ Order Executor Service is running")
 
 # Tabs for different functions
-tab1, tab2, tab3, tab4, tab5, tab6, tab_inject, tab7, tab8 = st.tabs([
+tab1, tab2, tab3, tab_alloc, tab4, tab5, tab6, tab_inject, tab7, tab8 = st.tabs([
     "Place Order",
     "Orders",
     "Trades",
+    "Trade Allocation",
     "Adjustments",
     "Positions",
     "Balances",
@@ -596,6 +622,119 @@ with tab3:
                 st.info("No trades found")
         else:
             st.error(f"❌ Failed to load trades: {result.get('error', 'Unknown error')}")
+
+# Tab: Trade Allocation
+with tab_alloc:
+    st.header("Trade Allocation")
+    st.caption("Reallocate one or more trades to a different book. Positions and balances are rebuilt after reallocation.")
+    
+    book_options = load_books_for_dropdown()
+    if not book_options:
+        book_options = [("Default Book (default)", "default")]
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        filter_symbol_alloc = st.text_input("Filter by Symbol (optional)", value="", key="alloc_symbol", placeholder="e.g., BTCUSDT")
+        book_options_with_all = [("All Books", "")] + book_options
+        selected_book_alloc = st.selectbox(
+            "Filter by Book",
+            options=[opt[0] for opt in book_options_with_all],
+            index=0,
+            key="alloc_book_filter"
+        )
+        filter_book_alloc = next((opt[1] for opt in book_options_with_all if opt[0] == selected_book_alloc), None)
+    
+    if st.button("Load Trades", type="primary", key="alloc_load_trades"):
+        result = get_trades(
+            symbol=filter_symbol_alloc.upper() if filter_symbol_alloc else None,
+            book_id=filter_book_alloc if filter_book_alloc else None,
+            record_status="all",
+            limit=100,
+        )
+        if result["success"]:
+            st.session_state["alloc_trades"] = result["data"].get("trades", [])
+        else:
+            st.session_state["alloc_trades"] = []
+            st.error(result.get("error", "Failed to load trades"))
+    
+    alloc_trades = st.session_state.get("alloc_trades", [])
+    if not alloc_trades:
+        st.info("Click **Load Trades** to list trades, then check rows and reallocate.")
+    else:
+        # Build table with checkbox column
+        rows = []
+        for t in alloc_trades:
+            traded_str = ""
+            if t.get("traded_at"):
+                traded = datetime.fromtimestamp(t["traded_at"] / 1000)
+                traded_str = traded.strftime("%Y-%m-%d %H:%M")
+            total = t.get("quantity", 0) * t.get("price", 0)
+            rec_status = t.get("record_status") or t.get("recordStatus") or "—"
+            rows.append({
+                "Select": False,
+                "ID": t.get("id"),
+                "Book": t.get("book_id", "N/A"),
+                "Status": rec_status,
+                "Symbol": t.get("symbol", "—"),
+                "Side": (t.get("side") or "—").strip() or "—",
+                "Quantity": round(float(t.get("quantity", 0)), 6),
+                "Price": round(float(t.get("price", 0)), 2),
+                "Total": round(total, 2),
+                "Traded At": traded_str,
+            })
+        df_alloc = pd.DataFrame(rows)
+        st.success(f"Showing {len(alloc_trades)} trade(s). Check rows to reallocate, then choose target book and click the button.")
+        edited_df = st.data_editor(
+            df_alloc,
+            column_config={
+                "Select": st.column_config.CheckboxColumn("Reallocate?", help="Check to reallocate this trade", default=False),
+                "ID": st.column_config.NumberColumn("ID", disabled=True),
+                "Book": st.column_config.TextColumn("Book", disabled=True),
+                "Status": st.column_config.TextColumn("Status", disabled=True),
+                "Symbol": st.column_config.TextColumn("Symbol", disabled=True),
+                "Side": st.column_config.TextColumn("Side", disabled=True),
+                "Quantity": st.column_config.NumberColumn("Quantity", format="%.6f", disabled=True),
+                "Price": st.column_config.NumberColumn("Price", format="%.2f", disabled=True),
+                "Total": st.column_config.NumberColumn("Total", format="%.2f", disabled=True),
+                "Traded At": st.column_config.TextColumn("Traded At", disabled=True),
+            },
+            hide_index=True,
+            use_container_width=True,
+            key="alloc_table",
+        )
+        selected_trade_ids = edited_df[edited_df["Select"]]["ID"].astype(int).tolist()
+        
+        col_a, col_b = st.columns([1, 1])
+        with col_a:
+            target_book_label = st.selectbox(
+                "Reallocate to book",
+                options=[opt[0] for opt in book_options],
+                key="alloc_target_book",
+            )
+            target_book_id = next((opt[1] for opt in book_options if opt[0] == target_book_label), None)
+        with col_b:
+            st.write("")
+            st.write("")
+            do_realloc = st.button("Reallocate selected", type="primary", key="alloc_submit")
+        
+        if do_realloc and selected_trade_ids and target_book_id:
+            n = len(selected_trade_ids)
+            with st.spinner(f"Reallocating {n} trade(s) and rebuilding..."):
+                ok, errs = 0, []
+                for tid in selected_trade_ids:
+                    result = reallocate_trade(tid, target_book_id)
+                    if result["success"]:
+                        ok += 1
+                    else:
+                        errs.append(f"Trade {tid}: {result.get('error', 'Unknown error')}")
+            if errs:
+                st.error("❌ Some failed:\n" + "\n".join(errs))
+            if ok:
+                st.success(f"✅ {ok} trade(s) reallocated to **{target_book_id}**. Positions and balances rebuilt.")
+            if ok == n and "alloc_trades" in st.session_state:
+                del st.session_state["alloc_trades"]
+        elif do_realloc and not selected_trade_ids:
+            st.warning("Check at least one trade in the table to reallocate.")
 
 # Tab 4: Adjustments
 with tab4:
