@@ -310,7 +310,7 @@ This document describes the complete architecture for order execution and bookin
 6. **`viz/pages/admin.py`** (NEW)
    - Streamlit admin panel page
 
-7. **`docs/plans/order-booking-services-architecture.md`** (THIS FILE)
+7. **`docs/plans/architecture/order-booking-services-architecture.md`** (THIS FILE)
    - Architecture documentation
 
 ### Files to Modify

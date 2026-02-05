@@ -121,6 +121,6 @@ Admin → POST /admin/trades → Ledger.record_trade() → Positions/Balances Up
 
 ## Key Files Reference
 
-- **Architecture Doc:** `docs/plans/order-booking-services-architecture.md`
-- **Implementation Checklist:** `docs/plans/order-booking-services-implementation-checklist.md`
+- **Architecture Doc:** `docs/plans/architecture/order-booking-services-architecture.md`
+- **Implementation Checklist:** `docs/plans/checklists/order-booking-services-checklist.md`
 - **This Summary:** `docs/operations/order-booking-services-summary.md`

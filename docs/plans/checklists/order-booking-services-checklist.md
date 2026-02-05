@@ -384,8 +384,8 @@ except Exception as e:
 
 ### New Files to Create (8 files)
 
-1. ✅ `docs/plans/order-booking-services-architecture.md` - Architecture doc
-2. ✅ `docs/plans/order-booking-services-implementation-checklist.md` - This file
+1. ✅ `docs/plans/architecture/order-booking-services-architecture.md` - Architecture doc
+2. ✅ `docs/plans/checklists/order-booking-services-checklist.md` - This file
 3. ⬜ `Dockerfile.executor` - Docker image for order executor
 4. ⬜ `scripts/services/run_order_executor.py` - Main order executor service
 5. ⬜ `viz/pages/admin.py` - Streamlit admin panel

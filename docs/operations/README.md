@@ -26,7 +26,7 @@ Comprehensive monitoring and troubleshooting guide:
 Booking system and reconciliation operations (planned):
 - No separate balance-monitoring service; ledger updated from booked trades only
 - Fill-sync job (periodic and/or after each order); reconciliation job (e.g. daily)
-- See [Booking System & Reconciliations Plan](../plans/booking-system-and-recon.md) for full design
+- See [Booking System & Reconciliations Architecture](../../plans/architecture/booking-system-and-recon.md) for full design
 
 ### [Data Integrity](data-integrity.md)
 Data integrity checking framework and operations guide:
@@ -47,6 +47,12 @@ Standard Operating Procedure for adding new data collection tables:
 - Testing and verification
 - Service updates
 - Complete checklist
+
+### [GUI Tools](gui/README.md)
+GUI tools for managing and monitoring the system:
+- **RedisInsight** - Redis management and monitoring GUI
+  - [Usage Manual](gui/redisinsight-usage-manual.md) - Comprehensive RedisInsight guide
+  - [Setup Guide](gui/redis-gui-setup.md) - RedisInsight setup and access
 
 ## Quick Reference
 
@@ -74,6 +80,8 @@ docker compose down
 
 - [Data Integrity](data-integrity.md) - Data quality checks and integrity framework (this directory)
 - [Reports README](../../reports/README.md) - Data integrity reports documentation
+- [Implementation Progress](../implementation/README.md) - What has been implemented
+- [Plans & Architecture](../plans/README.md) - Future plans and architecture designs
 
 ## Contributing
 

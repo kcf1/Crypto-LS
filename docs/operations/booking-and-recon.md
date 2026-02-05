@@ -1,6 +1,6 @@
 # Booking & Reconciliation Operations
 
-Operations guide for the booking system and reconciliations. Design and workflow are defined in the [Booking System & Reconciliations Plan](../plans/booking-system-and-recon.md). Status: **WIP**.
+Operations guide for the booking system and reconciliations. Design and workflow are defined in the [Booking System & Reconciliations Architecture](../plans/architecture/booking-system-and-recon.md). Status: **WIP**.
 
 ## Summary
 
@@ -54,9 +54,9 @@ No GUI required. Use scripts, CLI, and (when needed) controlled SQL.
 
 - **Do not** edit existing trade rows in place; use **adjustment/correction entries** (separate row or table) if you must correct, and document the reason.
 - Prefer: book missing trades, rebuild positions/balances from trades, and align order status to the exchange.
-- For edge cases (deposit/withdraw, manual trade on exchange, accept exchange as truth): use the **manual override / adjustments** path — see [Booking System & Reconciliations Plan](../plans/booking-system-and-recon.md#manual-override--adjustments). Every override must record who, when, why, and what.
+- For edge cases (deposit/withdraw, manual trade on exchange, accept exchange as truth): use the **manual override / adjustments** path — see [Booking System & Reconciliations Architecture](../plans/architecture/booking-system-and-recon.md#manual-override--adjustments). Every override must record who, when, why, and what.
 
 ## Related
 
-- [Booking System & Reconciliations Plan](../plans/booking-system-and-recon.md) — full design, tables, workflow, rec list.
+- [Booking System & Reconciliations Architecture](../plans/architecture/booking-system-and-recon.md) — full design, tables, workflow, rec list.
 - [Architecture](../ARCHITECTURE.md) — execution/booking modules (WIP).

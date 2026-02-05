@@ -556,7 +556,7 @@ docker compose up -d
 
 ## References
 
-- Architecture Document: `docs/plans/order-booking-services-architecture.md`
-- Implementation Checklist: `docs/plans/order-booking-services-implementation-checklist.md`
+- Architecture Document: `docs/plans/architecture/order-booking-services-architecture.md`
+- Implementation Checklist: `docs/plans/checklists/order-booking-services-checklist.md`
 - Resource Estimation: `docs/operations/resource-estimation-new-architecture.md`
 - Summary: `docs/operations/order-booking-services-summary.md`

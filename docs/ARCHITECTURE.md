@@ -19,7 +19,7 @@ Crypto-LS is a cryptocurrency trading system focused on:
 - **Futures Data Collection**: Automated collection of funding rates, open interest, basis (premium index), and long/short ratios (global and top trader account & position) from Binance Futures
 - **Data Integrity**: Automated checks to ensure data quality and completeness
 - **Strategy Backtesting**: Streamlit-based visualization and backtesting tools
-- **Order Management**: Framework for order execution and booking **[WIP]** — see [Booking System & Reconciliations Plan](plans/booking-system-and-recon.md)
+- **Order Management**: Framework for order execution and booking **[WIP]** — see [Booking System & Reconciliations Architecture](plans/architecture/booking-system-and-recon.md)
 
 The system is containerized using Docker and uses PostgreSQL as the primary database.
 
