@@ -110,7 +110,110 @@ Before creating a book, prepare the following details:
 
 ---
 
-### Step 3: Review and Approve Book Details
+### Step 3: Present Book Details for Review
+
+Before creating the book, present the complete book details for review:
+
+**Example Book Details to Present:**
+
+```json
+{
+  "id": "test_book",
+  "name": "Test Book",
+  "venue": "binance_spot",
+  "description": "Test book for development and testing",
+  "notes": "Created for API testing purposes"
+}
+```
+
+**Display Format (for review):**
+
+```
+═══════════════════════════════════════════════════════
+  BOOK CREATION REQUEST - REVIEW BEFORE CREATION
+═══════════════════════════════════════════════════════
+
+Book ID:        test_book
+Book Name:      Test Book
+Venue:          binance_spot
+Description:    Test book for development and testing
+Notes:          Created for API testing purposes
+
+═══════════════════════════════════════════════════════
+```
+
+**Using curl to display formatted details:**
+
+```bash
+# Prepare book details
+BOOK_ID="test_book"
+BOOK_NAME="Test Book"
+VENUE="binance_spot"
+DESCRIPTION="Test book for development and testing"
+NOTES="Created for API testing purposes"
+
+# Display for review
+echo "═══════════════════════════════════════════════════════"
+echo "  BOOK CREATION REQUEST - REVIEW BEFORE CREATION"
+echo "═══════════════════════════════════════════════════════"
+echo ""
+echo "Book ID:        $BOOK_ID"
+echo "Book Name:      $BOOK_NAME"
+echo "Venue:          $VENUE"
+echo "Description:    $DESCRIPTION"
+echo "Notes:          $NOTES"
+echo ""
+echo "═══════════════════════════════════════════════════════"
+```
+
+**Using PowerShell to display formatted details:**
+
+```powershell
+# Prepare book details
+$bookId = "test_book"
+$bookName = "Test Book"
+$venue = "binance_spot"
+$description = "Test book for development and testing"
+$notes = "Created for API testing purposes"
+
+# Display for review
+Write-Host "═══════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "  BOOK CREATION REQUEST - REVIEW BEFORE CREATION" -ForegroundColor Cyan
+Write-Host "═══════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "Book ID:        $bookId"
+Write-Host "Book Name:      $bookName"
+Write-Host "Venue:          $venue"
+Write-Host "Description:    $description"
+Write-Host "Notes:          $notes"
+Write-Host ""
+Write-Host "═══════════════════════════════════════════════════════" -ForegroundColor Cyan
+```
+
+**Using Python to display formatted details:**
+
+```python
+book_details = {
+    "id": "test_book",
+    "name": "Test Book",
+    "venue": "binance_spot",
+    "description": "Test book for development and testing",
+    "notes": "Created for API testing purposes"
+}
+
+print("=" * 55)
+print("  BOOK CREATION REQUEST - REVIEW BEFORE CREATION")
+print("=" * 55)
+print()
+for key, value in book_details.items():
+    print(f"{key.capitalize():<15} {value}")
+print()
+print("=" * 55)
+```
+
+---
+
+### Step 4: Review and Approve Book Details
 
 **Review Checklist:**
 - [ ] Book ID follows format requirements (lowercase, alphanumeric + underscores)
@@ -118,6 +221,7 @@ Before creating a book, prepare the following details:
 - [ ] Name is descriptive and clear
 - [ ] Venue matches your trading venue
 - [ ] Description explains the book's purpose
+- [ ] All details are correct as presented
 
 **Check if Book Already Exists:**
 ```bash
@@ -144,9 +248,11 @@ curl http://localhost:8000/books/test_book
 }
 ```
 
+**⚠️ Important:** Only proceed to creation after reviewing and approving the presented book details.
+
 ---
 
-### Step 4: Create Book via API
+### Step 5: Create Book via API
 
 Once book details are approved, create the book:
 
@@ -198,7 +304,7 @@ print(f"Response: {response.json()}")
 
 ---
 
-### Step 5: Verify Book Creation
+### Step 6: Verify Book Creation
 
 **Expected Success Response (HTTP 201):**
 ```json
