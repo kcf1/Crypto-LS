@@ -38,6 +38,25 @@ services:
         limits:
           memory: 512M
 
+  # RedisInsight is the official Redis GUI. Run only when needed:
+  #   docker compose up -d redis
+  # To use RedisInsight: docker compose up -d redisinsight
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: crypto-ls-redisinsight
+    ports:
+      - "5540:5540"
+    volumes:
+      - redisinsight_data:/data
+    depends_on:
+      - redis
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+
   data-updater:
     build:
       context: .
@@ -83,3 +102,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  redisinsight_data:
