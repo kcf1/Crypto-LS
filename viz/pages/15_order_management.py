@@ -24,9 +24,38 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 from config import settings
+from data.storage import Storage
 
 # Order Executor API Configuration
 ORDER_EXECUTOR_URL = "http://localhost:8000"
+
+
+@st.cache_data(ttl=10)
+def get_latest_close_price(symbol: str, timeframe: str = "5m") -> Optional[float]:
+    """Get the latest close price for a symbol from the database."""
+    try:
+        storage = Storage()
+        # Get latest open_time first
+        latest_time = storage.get_latest_open_time(symbol.upper(), timeframe)
+        if not latest_time:
+            return None
+        
+        # Get the bar with that open_time
+        bars = storage.read_ohlcv(
+            symbol=symbol.upper(),
+            timeframe=timeframe,
+            from_time=latest_time,
+            to_time=latest_time,
+            limit=1
+        )
+        if bars and len(bars) > 0:
+            # Return the close price from the latest bar
+            # Format: (open_time, open, high, low, close, volume, close_time)
+            return float(bars[-1][4])  # close is at index 4
+        return None
+    except Exception:
+        # Silently fail - price will default to 0.0
+        return None
 
 
 def check_service_health() -> bool:
@@ -257,7 +286,25 @@ with tab1:
         
         with col2:
             quantity = st.number_input("Quantity", min_value=0.0, value=0.001, step=0.001, format="%.6f", help="Base asset quantity")
-            price = st.number_input("Price", min_value=0.0, value=0.0, step=0.01, format="%.2f", help="Required for LIMIT orders")
+            
+            # Get latest close price for default
+            symbol_upper = symbol.upper() if symbol else "BTCUSDT"
+            latest_close = get_latest_close_price(symbol_upper)
+            default_price = latest_close if latest_close else 0.0
+            
+            # Show latest price info
+            if latest_close:
+                st.caption(f"💡 Latest close: {latest_close:.2f} USDT")
+            
+            price_help = f"Required for LIMIT orders. Default: Latest close ({default_price:.2f} USDT)" if default_price > 0 else "Required for LIMIT orders"
+            price = st.number_input(
+                "Price", 
+                min_value=0.0, 
+                value=default_price, 
+                step=0.01, 
+                format="%.2f", 
+                help=price_help
+            )
             # Book selection dropdown
             book_options = load_books_for_dropdown()
             if book_options:
