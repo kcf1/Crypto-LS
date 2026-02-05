@@ -452,7 +452,7 @@ def fix_rec6_balances_vs_binance(
     """Fix Rec 6: Balances vs Binance - rebuild balances from trades."""
     logger.info("Fixing Rec 6: Balances vs Binance")
     
-    result = rec6_balances_vs_binance(ledger, BinanceClient(), book_id=book_id)
+    result = rec6_balances_vs_binance(ledger, BinanceClient(use_testnet=True), book_id=book_id)
     mismatches = result.get("mismatches", [])
     
     if not mismatches:
@@ -521,7 +521,7 @@ Examples:
         logger.info("DRY RUN MODE - No changes will be made")
     
     ledger = Ledger()
-    binance_client = BinanceClient()
+    binance_client = BinanceClient(use_testnet=True)  # Fix rec always uses testnet to match test orders
     orchestrator = BookingOrchestrator()
     
     fixes_to_run = []

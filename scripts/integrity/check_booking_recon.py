@@ -438,7 +438,7 @@ def main() -> int:
     logger.info(f"Book ID: {args.book_id or 'all'}")
     
     ledger = Ledger()
-    binance_client = BinanceClient()
+    binance_client = BinanceClient(use_testnet=True)  # Rec always uses testnet to match test orders
     
     # Run all reconciliations
     results = []

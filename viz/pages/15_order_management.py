@@ -80,7 +80,7 @@ def place_order(order_data: Dict) -> Dict:
         return {"success": False, "error": str(e)}
 
 
-def get_orders(symbol: Optional[str] = None, book_id: Optional[str] = None, limit: int = 50) -> Dict:
+def get_orders(symbol: Optional[str] = None, book_id: Optional[str] = None, record_status: Optional[str] = None, limit: int = 50) -> Dict:
     """Get orders from API."""
     try:
         params = {"limit": limit}
@@ -88,6 +88,8 @@ def get_orders(symbol: Optional[str] = None, book_id: Optional[str] = None, limi
             params["symbol"] = symbol
         if book_id:
             params["book_id"] = book_id
+        if record_status:
+            params["record_status"] = record_status
         response = requests.get(f"{ORDER_EXECUTOR_URL}/orders", params=params, timeout=5)
         response.raise_for_status()
         return {"success": True, "data": response.json()}
@@ -95,15 +97,36 @@ def get_orders(symbol: Optional[str] = None, book_id: Optional[str] = None, limi
         return {"success": False, "error": str(e)}
 
 
-def get_trades(symbol: Optional[str] = None, book_id: Optional[str] = None, limit: int = 50) -> Dict:
-    """Get trades from API."""
+def get_trades(symbol: Optional[str] = None, book_id: Optional[str] = None, record_status: Optional[str] = None, limit: int = 50) -> Dict:
+    """Get trades from API. Use record_status='all' to fetch all statuses (VALID, INVALID, DELETED)."""
     try:
         params = {"limit": limit}
         if symbol:
             params["symbol"] = symbol
         if book_id:
             params["book_id"] = book_id
+        if record_status is not None:
+            params["record_status"] = record_status  # "VALID", "INVALID", "DELETED", or "all" for all
         response = requests.get(f"{ORDER_EXECUTOR_URL}/trades", params=params, timeout=5)
+        response.raise_for_status()
+        return {"success": True, "data": response.json()}
+    except requests.exceptions.RequestException as e:
+        return {"success": False, "error": str(e)}
+
+
+def get_adjustments(venue: Optional[str] = None, book_id: Optional[str] = None, type_filter: Optional[str] = None, record_status: Optional[str] = None, limit: int = 50) -> Dict:
+    """Get adjustments from API."""
+    try:
+        params = {"limit": limit}
+        if venue:
+            params["venue"] = venue
+        if book_id:
+            params["book_id"] = book_id
+        if type_filter:
+            params["type"] = type_filter
+        if record_status:
+            params["record_status"] = record_status
+        response = requests.get(f"{ORDER_EXECUTOR_URL}/adjustments", params=params, timeout=5)
         response.raise_for_status()
         return {"success": True, "data": response.json()}
     except requests.exceptions.RequestException as e:
@@ -261,10 +284,11 @@ if not check_service_health():
 st.success("✅ Order Executor Service is running")
 
 # Tabs for different functions
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "Place Order",
     "Orders",
     "Trades",
+    "Adjustments",
     "Positions",
     "Balances",
     "Admin",
@@ -357,7 +381,7 @@ with tab1:
 with tab2:
     st.header("Order History")
     
-    col1, col2, col3 = st.columns([2, 2, 1])
+    col1, col2, col3, col4 = st.columns([2, 2, 1.5, 1])
     with col1:
         filter_symbol = st.text_input("Filter by Symbol (optional)", value="", placeholder="e.g., BTCUSDT")
     with col2:
@@ -372,6 +396,14 @@ with tab2:
         )
         filter_book_id = next((opt[1] for opt in book_options_with_all if opt[0] == selected_book_filter), None)
     with col3:
+        record_status_filter = st.selectbox(
+            "Record Status",
+            options=["VALID", "All", "INVALID", "DELETED", "CANCELLED"],
+            index=0,
+            key="orders_record_status_filter"
+        )
+        filter_record_status = None if record_status_filter == "All" else record_status_filter
+    with col4:
         limit = st.number_input("Limit", min_value=1, max_value=500, value=50)
     
     if st.button("Refresh Orders", type="primary"):
@@ -379,6 +411,7 @@ with tab2:
             result = get_orders(
                 symbol=filter_symbol.upper() if filter_symbol else None,
                 book_id=filter_book_id if filter_book_id else None,
+                record_status=filter_record_status,
                 limit=limit
             )
         
@@ -399,18 +432,29 @@ with tab2:
                     elif created_at == 0:
                         created_str = "N/A (timestamp not available)"
                     
+                    updated_str = ""
+                    updated_at = order.get('updated_at')
+                    if updated_at and updated_at > 0:
+                        updated = datetime.fromtimestamp(updated_at / 1000)
+                        updated_str = updated.strftime('%Y-%m-%d %H:%M:%S')
+                    elif updated_at == 0:
+                        updated_str = "N/A"
+                    
                     orders_data.append({
                         "ID": order.get('id'),
+                        "Venue": order.get('venue', 'N/A'),
                         "Symbol": order.get('symbol', 'N/A'),
                         "Side": order.get('side', 'N/A'),
                         "Type": order.get('order_type', 'N/A'),
                         "Status": order.get('status', 'N/A'),
+                        "Record Status": order.get('record_status', 'N/A'),
                         "Quantity": f"{order.get('quantity', 0):.6f}",
                         "Price": f"{order.get('price', 0):.2f}" if order.get('price') else "N/A",
                         "Executed Qty": f"{order.get('executed_qty', 0):.6f}",
                         "Exchange ID": str(order.get('exchange_order_id', 'N/A')),
                         "Book ID": order.get('book_id', 'N/A'),
                         "Created": created_str,
+                        "Updated": updated_str,
                         "Notes": order.get('notes', '')[:50] + "..." if order.get('notes') and len(order.get('notes', '')) > 50 else order.get('notes', ''),
                     })
                 
@@ -443,7 +487,7 @@ with tab2:
 with tab3:
     st.header("Trade History")
     
-    col1, col2, col3 = st.columns([2, 2, 1])
+    col1, col2, col3, col4 = st.columns([2, 2, 1.5, 1])
     with col1:
         filter_symbol = st.text_input("Filter by Symbol (optional)", value="", key="trade_symbol", placeholder="e.g., BTCUSDT")
     with col2:
@@ -458,6 +502,14 @@ with tab3:
         )
         filter_book_id = next((opt[1] for opt in book_options_with_all if opt[0] == selected_book_filter), None)
     with col3:
+        record_status_filter = st.selectbox(
+            "Record Status",
+            options=["All", "VALID", "INVALID", "DELETED"],
+            index=0,
+            key="trades_record_status_filter"
+        )
+        filter_record_status = "all" if record_status_filter == "All" else record_status_filter
+    with col4:
         limit = st.number_input("Limit", min_value=1, max_value=500, value=50, key="trade_limit")
     
     if st.button("Refresh Trades", type="primary", key="refresh_trades"):
@@ -465,6 +517,7 @@ with tab3:
             result = get_trades(
                 symbol=filter_symbol.upper() if filter_symbol else None,
                 book_id=filter_book_id if filter_book_id else None,
+                record_status=filter_record_status,
                 limit=limit
             )
         
@@ -486,8 +539,14 @@ with tab3:
                     if trade.get('commission'):
                         commission_str = f"{trade.get('commission', 0):.6f} {trade.get('commission_asset', '')}"
                     
+                    # Support both snake_case and camelCase from API; show actual status or — if missing
+                    rec_status = trade.get('record_status') or trade.get('recordStatus')
+                    rec_status_str = rec_status if rec_status else "—"
                     trades_data.append({
                         "ID": trade.get('id'),
+                        "Book ID": trade.get('book_id', 'N/A'),
+                        "Record Status": rec_status_str,
+                        "Venue": trade.get('venue', 'N/A'),
                         "Symbol": trade.get('symbol', 'N/A'),
                         "Side": trade.get('side', 'N/A'),
                         "Quantity": f"{trade.get('quantity', 0):.6f}",
@@ -496,8 +555,8 @@ with tab3:
                         "Commission": commission_str or "N/A",
                         "Order ID": trade.get('order_id', 'N/A'),
                         "Exchange Trade ID": trade.get('exchange_trade_id', 'N/A'),
-                        "Book ID": trade.get('book_id', 'N/A'),
                         "Traded At": traded_str,
+                        "Notes": trade.get('notes', '')[:50] + "..." if trade.get('notes') and len(trade.get('notes', '')) > 50 else trade.get('notes', ''),
                     })
                 
                 df_trades = pd.DataFrame(trades_data)
@@ -507,7 +566,87 @@ with tab3:
         else:
             st.error(f"❌ Failed to load trades: {result.get('error', 'Unknown error')}")
 
-# Tab 4: Positions
+# Tab 4: Adjustments
+with tab4:
+    st.header("Adjustments History")
+    
+    col1, col2, col3, col4 = st.columns([2, 2, 1.5, 1])
+    with col1:
+        filter_book_adjustments = None
+        book_options = load_books_for_dropdown()
+        book_options_with_all = [("All Books", "")] + book_options
+        selected_book_filter = st.selectbox(
+            "Filter by Book",
+            options=[opt[0] for opt in book_options_with_all],
+            index=0,
+            key="adjustments_book_filter"
+        )
+        filter_book_adjustments = next((opt[1] for opt in book_options_with_all if opt[0] == selected_book_filter), None)
+    with col2:
+        filter_type = st.selectbox(
+            "Type",
+            options=["All", "balance", "position", "order_status", "trade_invalidation"],
+            index=0,
+            key="adjustments_type_filter"
+        )
+        filter_type_value = None if filter_type == "All" else filter_type
+    with col3:
+        record_status_filter = st.selectbox(
+            "Record Status",
+            options=["VALID", "All", "INVALID", "DELETED", "CANCELLED"],
+            index=0,
+            key="adjustments_record_status_filter"
+        )
+        filter_record_status_adjustments = None if record_status_filter == "All" else record_status_filter
+    with col4:
+        limit_adjustments = st.number_input("Limit", min_value=1, max_value=500, value=50, key="adjustments_limit")
+    
+    if st.button("Refresh Adjustments", type="primary", key="refresh_adjustments"):
+        with st.spinner("Loading adjustments..."):
+            result = get_adjustments(
+                venue=settings.venue,
+                book_id=filter_book_adjustments if filter_book_adjustments else None,
+                type_filter=filter_type_value,
+                record_status=filter_record_status_adjustments,
+                limit=limit_adjustments
+            )
+        
+        if result["success"]:
+            adjustments = result["data"].get("adjustments", [])
+            st.success(f"✅ Found {len(adjustments)} adjustments")
+            
+            if adjustments:
+                # Convert to DataFrame for table display
+                adjustments_data = []
+                for adj in adjustments:
+                    created_str = ""
+                    created_at = adj.get('created_at')
+                    if created_at and created_at > 0:
+                        created = datetime.fromtimestamp(created_at / 1000)
+                        created_str = created.strftime('%Y-%m-%d %H:%M:%S')
+                    
+                    adjustments_data.append({
+                        "ID": adj.get('id'),
+                        "Venue": adj.get('venue', 'N/A'),
+                        "Book ID": adj.get('book_id', 'N/A'),
+                        "Type": adj.get('type', 'N/A'),
+                        "Asset/Symbol": adj.get('asset_or_symbol', 'N/A'),
+                        "Delta/Value": f"{adj.get('delta_or_value', 0):.6f}",
+                        "Reason": adj.get('reason', 'N/A')[:50] + "..." if adj.get('reason') and len(adj.get('reason', '')) > 50 else adj.get('reason', ''),
+                        "Record Status": adj.get('record_status', 'N/A'),
+                        "Created By": adj.get('created_by', 'N/A'),
+                        "Created At": created_str,
+                        "Notes": adj.get('notes', '')[:50] + "..." if adj.get('notes') and len(adj.get('notes', '')) > 50 else adj.get('notes', ''),
+                    })
+                
+                df_adjustments = pd.DataFrame(adjustments_data)
+                st.dataframe(df_adjustments, use_container_width=True, hide_index=True)
+            else:
+                st.info("No adjustments found")
+        else:
+            st.error(f"❌ Failed to load adjustments: {result.get('error', 'Unknown error')}")
+
+# Tab 5: Positions
 with tab4:
     st.header("Current Positions")
     
@@ -565,8 +704,8 @@ with tab4:
         else:
             st.error(f"❌ Failed to load positions: {result.get('error', 'Unknown error')}")
 
-# Tab 5: Balances
-with tab5:
+# Tab 6: Balances
+with tab6:
     st.header("Account Balances")
     
     col1, col2 = st.columns(2)
@@ -646,8 +785,8 @@ with tab5:
         else:
             st.error(f"❌ Failed to load balances: {result.get('error', 'Unknown error')}")
 
-# Tab 6: Admin
-with tab6:
+# Tab 7: Admin
+with tab7:
     st.header("Admin Functions")
     st.warning("⚠️ Admin functions - use with caution")
     
@@ -677,8 +816,8 @@ with tab6:
             else:
                 st.error(f"❌ Failed: {result.get('error', 'Unknown error')}")
 
-# Tab 7: Book Management
-with tab7:
+# Tab 8: Book Management
+with tab8:
     st.header("📚 Book Management")
     st.caption("Create, edit, and manage trading books")
     

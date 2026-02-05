@@ -395,16 +395,27 @@ def list_trades() -> Dict[str, Any]:
     try:
         book_id = request.args.get("book_id")
         symbol = request.args.get("symbol")
-        record_status = request.args.get("record_status")  # Optional: VALID, INVALID, DELETED, etc.
+        record_status_param = request.args.get("record_status")  # VALID, INVALID, DELETED, or "all"
         limit = request.args.get("limit", type=int, default=100)
+        
+        # Only "all" (case-insensitive) means no filter; otherwise pass stripped value so filter is applied
+        if record_status_param is not None and str(record_status_param).strip().lower() == "all":
+            record_status_for_ledger = ""
+        else:
+            record_status_for_ledger = record_status_param.strip() if isinstance(record_status_param, str) else record_status_param
         
         trades = ledger.get_trades(
             venue=settings.venue,
             book_id=book_id,
             symbol=symbol,
-            record_status=record_status,  # Defaults to VALID if None
+            record_status=record_status_for_ledger,
             limit=limit,
         )
+        
+        # Ensure every trade has record_status in response (for GUI display)
+        for t in trades:
+            if "record_status" not in t:
+                t["record_status"] = None
         
         return jsonify({
             "trades": trades,
@@ -500,6 +511,34 @@ def manual_order() -> Dict[str, Any]:
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/adjustments", methods=["GET"])
+def list_adjustments() -> Dict[str, Any]:
+    """List adjustments with optional filters."""
+    try:
+        venue = request.args.get("venue")
+        book_id = request.args.get("book_id")
+        type_filter = request.args.get("type")
+        record_status = request.args.get("record_status")  # Optional: VALID, INVALID, DELETED, etc.
+        limit = request.args.get("limit", type=int, default=100)
+        
+        adjustments = ledger.get_adjustments(
+            venue=venue,
+            book_id=book_id,
+            type=type_filter,
+            record_status=record_status,  # Defaults to VALID if None
+            limit=limit,
+        )
+        
+        return jsonify({
+            "adjustments": adjustments,
+            "count": len(adjustments),
+        }), 200
+    
+    except Exception as e:
+        logger.error(f"Error listing adjustments: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/admin/adjustments", methods=["POST"])
 def create_adjustment() -> Dict[str, Any]:
     """Create an adjustment (for reconciliation fixes)."""
@@ -518,12 +557,13 @@ def create_adjustment() -> Dict[str, Any]:
         adj_id = ledger.record_adjustment(
             venue=data["venue"],
             book_id=data["book_id"],
-            adj_type=data["type"],
+            type=data["type"],
             asset_or_symbol=data["asset_or_symbol"],
             delta_or_value=float(data["delta_or_value"]),
             reason=data["reason"],
             created_by=data.get("created_by"),
             notes=data.get("notes"),
+            record_status=data.get("record_status", "VALID"),
         )
         
         return jsonify({
@@ -582,8 +622,8 @@ def run_reconciliation() -> Dict[str, Any]:
         
         book_id = request.args.get("book_id")
         
-        # Initialize Binance client for reconciliation
-        binance_client = BinanceClient()
+        # Initialize Binance client for reconciliation (always testnet to match test orders)
+        binance_client = BinanceClient(use_testnet=True)
         
         # Run all reconciliation checks
         results = {
