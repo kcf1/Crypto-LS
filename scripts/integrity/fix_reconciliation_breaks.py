@@ -562,7 +562,7 @@ Examples:
         try:
             if rec == "rec1":
                 results[rec] = fix_rec1_orders_vs_trades(ledger, args.book_id, args.dry_run)
-            el            if rec == "rec2":
+            elif rec == "rec2":
                 results[rec] = fix_rec2_trades_vs_binance(
                     ledger, binance_client, orchestrator, args.book_id, args.dry_run,
                     handle_extra=True,
