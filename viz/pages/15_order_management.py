@@ -43,12 +43,14 @@ def place_order(order_data: Dict) -> Dict:
         return {"success": False, "error": str(e)}
 
 
-def get_orders(symbol: Optional[str] = None, limit: int = 50) -> Dict:
+def get_orders(symbol: Optional[str] = None, book_id: Optional[str] = None, limit: int = 50) -> Dict:
     """Get orders from API."""
     try:
         params = {"limit": limit}
         if symbol:
             params["symbol"] = symbol
+        if book_id:
+            params["book_id"] = book_id
         response = requests.get(f"{ORDER_EXECUTOR_URL}/orders", params=params, timeout=5)
         response.raise_for_status()
         return {"success": True, "data": response.json()}
@@ -56,12 +58,14 @@ def get_orders(symbol: Optional[str] = None, limit: int = 50) -> Dict:
         return {"success": False, "error": str(e)}
 
 
-def get_trades(symbol: Optional[str] = None, limit: int = 50) -> Dict:
+def get_trades(symbol: Optional[str] = None, book_id: Optional[str] = None, limit: int = 50) -> Dict:
     """Get trades from API."""
     try:
         params = {"limit": limit}
         if symbol:
             params["symbol"] = symbol
+        if book_id:
+            params["book_id"] = book_id
         response = requests.get(f"{ORDER_EXECUTOR_URL}/trades", params=params, timeout=5)
         response.raise_for_status()
         return {"success": True, "data": response.json()}
@@ -69,12 +73,14 @@ def get_trades(symbol: Optional[str] = None, limit: int = 50) -> Dict:
         return {"success": False, "error": str(e)}
 
 
-def get_positions(symbol: Optional[str] = None) -> Dict:
+def get_positions(symbol: Optional[str] = None, book_id: Optional[str] = None) -> Dict:
     """Get positions from API."""
     try:
         params = {}
         if symbol:
             params["symbol"] = symbol
+        if book_id:
+            params["book_id"] = book_id
         response = requests.get(f"{ORDER_EXECUTOR_URL}/positions", params=params, timeout=5)
         response.raise_for_status()
         return {"success": True, "data": response.json()}
@@ -82,12 +88,14 @@ def get_positions(symbol: Optional[str] = None) -> Dict:
         return {"success": False, "error": str(e)}
 
 
-def get_balances(asset: Optional[str] = None) -> Dict:
+def get_balances(asset: Optional[str] = None, book_id: Optional[str] = None) -> Dict:
     """Get balances from API."""
     try:
         params = {}
         if asset:
             params["asset"] = asset
+        if book_id:
+            params["book_id"] = book_id
         response = requests.get(f"{ORDER_EXECUTOR_URL}/balances", params=params, timeout=5)
         response.raise_for_status()
         return {"success": True, "data": response.json()}
@@ -216,15 +224,21 @@ with tab1:
 with tab2:
     st.header("Order History")
     
-    col1, col2 = st.columns([3, 1])
+    col1, col2, col3 = st.columns([2, 2, 1])
     with col1:
         filter_symbol = st.text_input("Filter by Symbol (optional)", value="", placeholder="e.g., BTCUSDT")
     with col2:
+        filter_book_id = st.text_input("Filter by Book ID (optional)", value="", placeholder="e.g., default")
+    with col3:
         limit = st.number_input("Limit", min_value=1, max_value=500, value=50)
     
     if st.button("Refresh Orders", type="primary"):
         with st.spinner("Loading orders..."):
-            result = get_orders(symbol=filter_symbol.upper() if filter_symbol else None, limit=limit)
+            result = get_orders(
+                symbol=filter_symbol.upper() if filter_symbol else None,
+                book_id=filter_book_id if filter_book_id else None,
+                limit=limit
+            )
         
         if result["success"]:
             orders = result["data"].get("orders", [])
@@ -269,15 +283,21 @@ with tab2:
 with tab3:
     st.header("Trade History")
     
-    col1, col2 = st.columns([3, 1])
+    col1, col2, col3 = st.columns([2, 2, 1])
     with col1:
         filter_symbol = st.text_input("Filter by Symbol (optional)", value="", key="trade_symbol", placeholder="e.g., BTCUSDT")
     with col2:
+        filter_book_id = st.text_input("Filter by Book ID (optional)", value="", key="trade_book_id", placeholder="e.g., default")
+    with col3:
         limit = st.number_input("Limit", min_value=1, max_value=500, value=50, key="trade_limit")
     
     if st.button("Refresh Trades", type="primary", key="refresh_trades"):
         with st.spinner("Loading trades..."):
-            result = get_trades(symbol=filter_symbol.upper() if filter_symbol else None, limit=limit)
+            result = get_trades(
+                symbol=filter_symbol.upper() if filter_symbol else None,
+                book_id=filter_book_id if filter_book_id else None,
+                limit=limit
+            )
         
         if result["success"]:
             trades = result["data"].get("trades", [])
@@ -309,11 +329,18 @@ with tab3:
 with tab4:
     st.header("Current Positions")
     
-    filter_symbol = st.text_input("Filter by Symbol (optional)", value="", key="pos_symbol", placeholder="e.g., BTCUSDT")
+    col1, col2 = st.columns(2)
+    with col1:
+        filter_symbol = st.text_input("Filter by Symbol (optional)", value="", key="pos_symbol", placeholder="e.g., BTCUSDT")
+    with col2:
+        filter_book_id = st.text_input("Filter by Book ID (optional)", value="", key="pos_book_id", placeholder="e.g., default")
     
     if st.button("Refresh Positions", type="primary", key="refresh_positions"):
         with st.spinner("Loading positions..."):
-            result = get_positions(symbol=filter_symbol.upper() if filter_symbol else None)
+            result = get_positions(
+                symbol=filter_symbol.upper() if filter_symbol else None,
+                book_id=filter_book_id if filter_book_id else None
+            )
         
         if result["success"]:
             positions = result["data"].get("positions", [])
@@ -341,11 +368,18 @@ with tab4:
 with tab5:
     st.header("Account Balances")
     
-    filter_asset = st.text_input("Filter by Asset (optional)", value="", key="balance_asset", placeholder="e.g., USDT")
+    col1, col2 = st.columns(2)
+    with col1:
+        filter_asset = st.text_input("Filter by Asset (optional)", value="", key="balance_asset", placeholder="e.g., USDT")
+    with col2:
+        filter_book_id = st.text_input("Filter by Book ID (optional)", value="", key="balance_book_id", placeholder="e.g., default")
     
     if st.button("Refresh Balances", type="primary", key="refresh_balances"):
         with st.spinner("Loading balances..."):
-            result = get_balances(asset=filter_asset.upper() if filter_asset else None)
+            result = get_balances(
+                asset=filter_asset.upper() if filter_asset else None,
+                book_id=filter_book_id if filter_book_id else None
+            )
         
         if result["success"]:
             balances = result["data"].get("balances", [])
