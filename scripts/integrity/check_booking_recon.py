@@ -388,8 +388,8 @@ def rec6_balances_vs_binance(ledger: Ledger, binance_client: BinanceClient, book
     
     mismatches = []
     
-    # Compare balances
-    all_assets = set(ledger_balances.keys()) | set(binance_balances.keys())
+    # Only compare assets we track in the ledger (ignore Binance-only dust/testnet airdrops)
+    all_assets = set(ledger_balances.keys())
     
     for asset in all_assets:
         ledger_free = ledger_balances.get(asset, {}).get("free", 0.0)
