@@ -124,8 +124,25 @@ def rec2_trades_vs_binance(ledger: Ledger, binance_client: BinanceClient, book_i
                         "time": trade.get("time"),
                     })
             
-            # Find extra (in ledger but not in Binance) - less common, but check
-            # Note: This might happen if trades were deleted on exchange or ledger has test data
+            # Find extra (in ledger but not in Binance)
+            # These are trades that exist in ledger but not in Binance
+            extra = ledger_trade_ids - binance_trade_ids
+            for trade_id in extra:
+                trade = next(
+                    (t for t in recent_trades if str(t.get("exchange_trade_id", "")) == trade_id),
+                    None
+                )
+                if trade:
+                    extra_trades.append({
+                        "symbol": symbol,
+                        "exchange_trade_id": trade_id,
+                        "ledger_trade_id": trade.get("id"),
+                        "side": trade.get("side"),
+                        "quantity": trade.get("quantity"),
+                        "price": trade.get("price"),
+                        "traded_at": trade.get("traded_at"),
+                        "order_id": trade.get("order_id"),
+                    })
             
         except Exception as e:
             logger.error(f"Error fetching Binance trades for {symbol}: {e}")
@@ -135,8 +152,8 @@ def rec2_trades_vs_binance(ledger: Ledger, binance_client: BinanceClient, book_i
         "name": "Trades vs Binance",
         "symbols_checked": len(symbols_with_trades),
         "missing_trades": missing_trades,
-        "extra_trades": extra_trades,  # Not implemented fully, would need to check all Binance trades
-        "passed": len(missing_trades) == 0,
+        "extra_trades": extra_trades,
+        "passed": len(missing_trades) == 0 and len(extra_trades) == 0,
     }
 
 
@@ -253,12 +270,15 @@ def rec5_orders_vs_binance(ledger: Ledger, binance_client: BinanceClient, book_i
     """Rec 5: Orders vs Binance - check order status consistency."""
     logger.info("Running Rec 5: Orders vs Binance")
     
-    # Get open orders and recent orders from ledger
-    orders = ledger.get_orders(book_id=book_id, limit=100)  # Recent 100 orders
+    # Get open orders and recent orders from ledger (last 7 days)
+    seven_days_ago = int((time.time() - 7 * 24 * 3600) * 1000)
+    all_orders = ledger.get_orders(book_id=book_id)
+    recent_orders = [o for o in all_orders if o.get("created_at", 0) >= seven_days_ago]
     
     mismatches = []
+    extra_orders = []  # Orders in ledger but not in Binance
     
-    for order in orders:
+    for order in recent_orders:
         if not order["exchange_order_id"]:
             continue
         
@@ -280,6 +300,7 @@ def rec5_orders_vs_binance(ledger: Ledger, binance_client: BinanceClient, book_i
                     "symbol": symbol,
                     "ledger_status": ledger_status,
                     "binance_status": binance_status,
+                    "issue": "status_mismatch",
                 })
             
             # Compare quantities
@@ -300,15 +321,29 @@ def rec5_orders_vs_binance(ledger: Ledger, binance_client: BinanceClient, book_i
                 })
                 
         except Exception as e:
-            # Order might not exist on exchange (filled and removed from history)
-            logger.debug(f"Could not fetch order {exchange_order_id} from Binance: {e}")
+            # Order might not exist on exchange
+            error_msg = str(e).lower()
+            if "does not exist" in error_msg or "-2013" in error_msg or "not found" in error_msg:
+                # Order doesn't exist in Binance - mark as extra
+                extra_orders.append({
+                    "ledger_order_id": order["id"],
+                    "exchange_order_id": exchange_order_id,
+                    "symbol": symbol,
+                    "ledger_status": order["status"],
+                    "created_at": order.get("created_at"),
+                    "reason": "order_not_found_on_exchange",
+                })
+            else:
+                # Other error (e.g., API error) - log but don't mark as extra
+                logger.debug(f"Could not fetch order {exchange_order_id} from Binance: {e}")
             continue
     
     return {
         "name": "Orders vs Binance",
-        "total_orders_checked": len([o for o in orders if o["exchange_order_id"]]),
+        "total_orders_checked": len([o for o in recent_orders if o["exchange_order_id"]]),
         "mismatches": mismatches,
-        "passed": len(mismatches) == 0,
+        "extra_orders": extra_orders,
+        "passed": len(mismatches) == 0 and len(extra_orders) == 0,
     }
 
 
