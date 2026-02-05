@@ -99,6 +99,32 @@ services:
       timeout: 3s
       retries: 3
 
+  order-executor:
+    build:
+      context: .
+      dockerfile: Dockerfile.executor
+    container_name: crypto-ls-order-executor
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://crypto:crypto@postgres:5432/cryptols
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ORDER_EXECUTOR_PORT: ${ORDER_EXECUTOR_PORT:-8000}
+      ORDER_EXECUTOR_HOST: ${ORDER_EXECUTOR_HOST:-0.0.0.0}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+
 volumes:
   postgres_data:
   redis_data:

@@ -1,0 +1,19 @@
+# Order executor service: runs order-executor HTTP API and Redis Stream consumer.
+# Build: docker build -f Dockerfile.executor -t crypto-ls-order-executor .
+# Or use docker-compose: service order-executor builds this.
+
+FROM python:3.11-slim
+ENV PYTHONUNBUFFERED=1
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY config config
+COPY data data
+COPY scripts scripts
+COPY booking booking
+COPY execution execution
+COPY alembic alembic
+
+CMD ["python", "scripts/services/run_order_executor.py"]
