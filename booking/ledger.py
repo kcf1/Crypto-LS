@@ -587,9 +587,18 @@ class Ledger:
         symbol: Optional[str] = None,
         venue: Optional[str] = None,
         book_id: Optional[str] = None,
+        status: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """Query recorded orders."""
+        """Query recorded orders.
+        
+        Args:
+            symbol: Filter by symbol
+            venue: Filter by venue
+            book_id: Filter by book_id
+            status: Filter by status (e.g., "NEW", "PARTIALLY_FILLED", "FILLED")
+            limit: Maximum number of orders to return
+        """
         sql = "SELECT id, venue, book_id, exchange_order_id, symbol, side, order_type, quantity, price, status, created_at, updated_at, notes FROM orders WHERE 1=1"
         params: dict = {}
         if symbol:
@@ -601,6 +610,9 @@ class Ledger:
         if book_id:
             sql += " AND book_id = :book_id"
             params["book_id"] = book_id
+        if status:
+            sql += " AND status = :status"
+            params["status"] = status
         sql += " ORDER BY created_at DESC"
         if limit is not None:
             sql += " LIMIT :limit"

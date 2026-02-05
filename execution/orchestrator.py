@@ -1,5 +1,6 @@
 """Booking orchestrator: integrates order execution with booking ledger."""
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from binance.exceptions import BinanceAPIException
@@ -7,6 +8,8 @@ from binance.exceptions import BinanceAPIException
 from booking.ledger import Ledger
 from config import settings
 from execution.order_manager import OrderManager
+
+logger = logging.getLogger(__name__)
 
 
 class BookingOrchestrator:
@@ -152,8 +155,6 @@ class BookingOrchestrator:
                 )
             except Exception as e:
                 # Log error but don't fail order placement if fill sync fails
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.warning(f"Failed to sync fills for order {exchange_order_id}: {e}")
             
             return {
@@ -303,75 +304,140 @@ class BookingOrchestrator:
     def sync_fills_for_symbol(
         self,
         symbol: str,
-        book_id: str = "default",
+        book_id: Optional[str] = None,
         since: Optional[int] = None,
         limit: int = 100,
     ) -> List[int]:
-        """Sync all fills for a symbol from exchange and book them.
+        """Sync fills for unfilled orders of a symbol from exchange and book them.
+        
+        Order-driven approach:
+        1. Find unfilled orders (NEW or PARTIALLY_FILLED) for the symbol
+        2. For each order, fetch trades from Binance using orderId filter
+        3. Compare trade IDs with existing trades to find new fills
+        4. Record new trades (order status automatically updated)
         
         Args:
             symbol: Trading pair
-            book_id: Book identifier
-            since: Start timestamp in milliseconds (optional)
-            limit: Maximum number of trades to fetch
+            book_id: Optional book identifier filter (None = all books)
+            since: Start timestamp in milliseconds (optional, for Binance API)
+            limit: Maximum number of trades to fetch per order
             
         Returns:
-            List of ledger trade IDs
+            List of ledger trade IDs for newly recorded trades
         """
-        # Get trades from exchange
-        kwargs: Dict[str, Any] = {"limit": limit}
-        if since:
-            kwargs["startTime"] = since
+        # Get unfilled orders for this symbol
+        unfilled_statuses = ["NEW", "PARTIALLY_FILLED"]
+        unfilled_orders = []
+        for status in unfilled_statuses:
+            orders = self._ledger.get_orders(
+                symbol=symbol,
+                venue=self._venue,
+                book_id=book_id,
+                status=status,
+            )
+            unfilled_orders.extend(orders)
         
-        trades = self._order_manager.get_fills(symbol=symbol, **kwargs)
+        if not unfilled_orders:
+            logger.debug(f"No unfilled orders found for {symbol}")
+            return []
+        
+        logger.info(f"Found {len(unfilled_orders)} unfilled orders for {symbol}")
         
         ledger_trade_ids = []
-        for trade in trades:
-            # Extract fields
-            exchange_trade_id = str(trade.get("id", ""))
-            side = trade.get("side", "").upper()
-            quantity = float(trade.get("qty", "0"))
-            price = float(trade.get("price", "0"))
-            commission = float(trade.get("commission", "0"))
-            commission_asset = trade.get("commissionAsset")
-            traded_at = trade.get("time", 0)
-            order_id_from_exchange = trade.get("orderId")
+        
+        # Process each unfilled order
+        for order in unfilled_orders:
+            order_id = order["id"]
+            exchange_order_id = order["exchange_order_id"]
+            order_book_id = order["book_id"]
+            order_side = order["side"]
             
-            # Idempotency check
-            existing_trades = self._ledger.get_trades(
-                venue=self._venue,
-                book_id=book_id,
-                exchange_trade_id=exchange_trade_id,
-            )
-            if existing_trades:
-                ledger_trade_ids.append(existing_trades[0]["id"])
-                continue
-            
-            # Resolve ledger order_id from exchange order_id
-            ledger_order_id = None
-            if order_id_from_exchange:
-                order = self._ledger.get_order_by_exchange_id(
+            try:
+                # Fetch trades for this specific order from Binance
+                # Binance API supports orderId filter (more efficient: 5 weight vs 20)
+                kwargs: Dict[str, Any] = {
+                    "limit": limit,
+                    "orderId": int(exchange_order_id),  # Binance API filter by orderId (camelCase)
+                }
+                if since:
+                    kwargs["startTime"] = since
+                
+                try:
+                    binance_trades = self._order_manager.get_fills(symbol=symbol, **kwargs)
+                except Exception as api_error:
+                    # Handle case where orderId might be invalid (order cancelled, doesn't exist, etc.)
+                    error_msg = str(api_error).lower()
+                    if "invalid" in error_msg or "not found" in error_msg or "-2013" in error_msg:
+                        logger.debug(
+                            f"Order {exchange_order_id} not found or invalid on exchange "
+                            f"(may have been cancelled or doesn't exist): {api_error}"
+                        )
+                        # Order might have been cancelled externally - skip it
+                        continue
+                    raise  # Re-raise if it's a different error
+                
+                if not binance_trades:
+                    continue
+                
+                # Get existing trades for this order from ledger
+                existing_trades = self._ledger.get_trades(
                     venue=self._venue,
-                    exchange_order_id=str(order_id_from_exchange),
-                    book_id=book_id,
+                    book_id=order_book_id,
+                    order_id=order_id,
                 )
-                if order:
-                    ledger_order_id = order["id"]
-            
-            # Book trade
-            trade_id = self._ledger.record_trade(
-                venue=self._venue,
-                book_id=book_id,
-                symbol=symbol,
-                side=side,
-                quantity=quantity,
-                price=price,
-                traded_at=traded_at,
-                exchange_trade_id=exchange_trade_id,
-                order_id=ledger_order_id,
-                commission=commission,
-                commission_asset=commission_asset,
-            )
-            ledger_trade_ids.append(trade_id)
+                existing_trade_ids = {t["exchange_trade_id"] for t in existing_trades}
+                
+                # Process each trade from Binance
+                for trade in binance_trades:
+                    exchange_trade_id = str(trade.get("id", ""))
+                    
+                    # Skip if we already have this trade
+                    if exchange_trade_id in existing_trade_ids:
+                        continue
+                    
+                    # Extract trade fields
+                    # Try multiple ways to get side (Binance API varies by endpoint)
+                    side = trade.get("side", "").upper() if trade.get("side") else ""
+                    if not side:
+                        # For futures, might have isBuyer field
+                        is_buyer = trade.get("isBuyer")
+                        if is_buyer is not None:
+                            side = "BUY" if is_buyer else "SELL"
+                        else:
+                            # Fall back to order side if trade doesn't have it
+                            side = order_side.upper()
+                    
+                    quantity = float(trade.get("qty", trade.get("quantity", "0")))
+                    price = float(trade.get("price", "0"))
+                    commission = float(trade.get("commission", "0"))
+                    commission_asset = trade.get("commissionAsset")
+                    traded_at = trade.get("time", 0)
+                    
+                    # Record the trade (order status will be auto-updated)
+                    trade_id = self._ledger.record_trade(
+                        venue=self._venue,
+                        book_id=order_book_id,
+                        symbol=symbol,
+                        side=side,
+                        quantity=quantity,
+                        price=price,
+                        traded_at=traded_at,
+                        exchange_trade_id=exchange_trade_id,
+                        order_id=order_id,
+                        commission=commission,
+                        commission_asset=commission_asset,
+                    )
+                    ledger_trade_ids.append(trade_id)
+                    logger.debug(
+                        f"Recorded new fill: trade_id={trade_id}, order_id={order_id}, "
+                        f"exchange_trade_id={exchange_trade_id}"
+                    )
+                
+            except Exception as e:
+                logger.warning(
+                    f"Error syncing fills for order {order_id} (exchange_order_id={exchange_order_id}): {e}",
+                    exc_info=True,
+                )
+                continue
         
         return ledger_trade_ids
