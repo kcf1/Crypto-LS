@@ -170,7 +170,7 @@ def fix_rec2_trades_vs_binance(
                     ledger.record_adjustment(
                         venue=settings.venue,
                         book_id=trade.get("book_id") or book_id or "unknown",
-                        adj_type="trade_invalidation",
+                        type="trade_invalidation",
                         asset_or_symbol=trade["symbol"],
                         delta_or_value=0.0,  # No delta, just marking as invalid
                         reason=f"Trade {trade['exchange_trade_id']} exists in ledger but not in Binance. "

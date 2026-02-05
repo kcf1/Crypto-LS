@@ -9,7 +9,7 @@ from typing import Optional
 if str(Path(__file__).resolve().parent.parent.parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from booking.ledger import Ledger, _parse_symbol
+from booking.ledger import Ledger, _parse_symbol, _is_postgres
 from config import settings
 from sqlalchemy import create_engine, text
 
@@ -29,7 +29,7 @@ def rebuild_balances(ledger: Ledger, book_id: Optional[str] = None) -> None:
     """
     logger.info(f"Starting balances rebuild{' for book_id=' + book_id if book_id else ''}")
     
-    is_postgres = ledger._is_postgres(str(ledger._engine.url))
+    is_postgres = _is_postgres(str(ledger._engine.url))
     
     with ledger._engine.connect() as conn:
         # Delete existing balances (filtered by book_id if provided)
