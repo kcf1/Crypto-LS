@@ -44,6 +44,7 @@ pages = [
     st.Page("pages/12_top_long_short_account.py", title="Top Long/Short Account", icon="🏆"),
     st.Page("pages/13_top_long_short_position.py", title="Top Long/Short Position", icon="📊"),
     st.Page("pages/14_market_cap.py", title="Market Cap", icon="💎"),
+    st.Page("pages/15_order_management.py", title="Order Management", icon="📊"),
 ]
 
 pg = st.navigation(pages, position="hidden")
@@ -88,6 +89,10 @@ with st.sidebar:
     with st.expander("🌐 External Data (CoinGecko)", expanded=False):
         st.page_link("pages/14_market_cap.py", label="Market Cap", icon="💎")
         st.caption("Plot market capitalization and related metrics (daily snapshots)")
+
+    with st.expander("📊 Trading & Orders", expanded=False):
+        st.page_link("pages/15_order_management.py", label="Order Management", icon="📊")
+        st.caption("Manual order placement, view orders, trades, positions, and balances")
 
     st.divider()
     st.caption("💡 Tip: Use expanders to navigate between page groups")

@@ -1,0 +1,408 @@
+"""
+Order Management: Manual order placement and testing GUI.
+
+Connects to order-executor service API for placing orders, viewing trades, positions, and balances.
+"""
+
+import sys
+from pathlib import Path
+from typing import Dict, List, Optional
+
+_root = Path(__file__).resolve().parent.parent.parent
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+
+import requests
+import streamlit as st
+from datetime import datetime
+
+# Order Executor API Configuration
+ORDER_EXECUTOR_URL = "http://localhost:8000"
+
+
+def check_service_health() -> bool:
+    """Check if order-executor service is running."""
+    try:
+        response = requests.get(f"{ORDER_EXECUTOR_URL}/health", timeout=2)
+        return response.status_code == 200
+    except Exception:
+        return False
+
+
+def place_order(order_data: Dict) -> Dict:
+    """Place an order via API."""
+    try:
+        response = requests.post(
+            f"{ORDER_EXECUTOR_URL}/orders",
+            json=order_data,
+            timeout=10
+        )
+        response.raise_for_status()
+        return {"success": True, "data": response.json()}
+    except requests.exceptions.RequestException as e:
+        return {"success": False, "error": str(e)}
+
+
+def get_orders(symbol: Optional[str] = None, limit: int = 50) -> Dict:
+    """Get orders from API."""
+    try:
+        params = {"limit": limit}
+        if symbol:
+            params["symbol"] = symbol
+        response = requests.get(f"{ORDER_EXECUTOR_URL}/orders", params=params, timeout=5)
+        response.raise_for_status()
+        return {"success": True, "data": response.json()}
+    except requests.exceptions.RequestException as e:
+        return {"success": False, "error": str(e)}
+
+
+def get_trades(symbol: Optional[str] = None, limit: int = 50) -> Dict:
+    """Get trades from API."""
+    try:
+        params = {"limit": limit}
+        if symbol:
+            params["symbol"] = symbol
+        response = requests.get(f"{ORDER_EXECUTOR_URL}/trades", params=params, timeout=5)
+        response.raise_for_status()
+        return {"success": True, "data": response.json()}
+    except requests.exceptions.RequestException as e:
+        return {"success": False, "error": str(e)}
+
+
+def get_positions(symbol: Optional[str] = None) -> Dict:
+    """Get positions from API."""
+    try:
+        params = {}
+        if symbol:
+            params["symbol"] = symbol
+        response = requests.get(f"{ORDER_EXECUTOR_URL}/positions", params=params, timeout=5)
+        response.raise_for_status()
+        return {"success": True, "data": response.json()}
+    except requests.exceptions.RequestException as e:
+        return {"success": False, "error": str(e)}
+
+
+def get_balances(asset: Optional[str] = None) -> Dict:
+    """Get balances from API."""
+    try:
+        params = {}
+        if asset:
+            params["asset"] = asset
+        response = requests.get(f"{ORDER_EXECUTOR_URL}/balances", params=params, timeout=5)
+        response.raise_for_status()
+        return {"success": True, "data": response.json()}
+    except requests.exceptions.RequestException as e:
+        return {"success": False, "error": str(e)}
+
+
+def cancel_order(order_id: int) -> Dict:
+    """Cancel an order."""
+    try:
+        response = requests.post(
+            f"{ORDER_EXECUTOR_URL}/orders/{order_id}/cancel",
+            json={},
+            timeout=5
+        )
+        response.raise_for_status()
+        return {"success": True, "data": response.json()}
+    except requests.exceptions.RequestException as e:
+        return {"success": False, "error": str(e)}
+
+
+def rebuild_positions() -> Dict:
+    """Rebuild positions table."""
+    try:
+        response = requests.post(
+            f"{ORDER_EXECUTOR_URL}/admin/rebuild-positions",
+            json={},
+            timeout=30
+        )
+        response.raise_for_status()
+        return {"success": True, "data": response.json()}
+    except requests.exceptions.RequestException as e:
+        return {"success": False, "error": str(e)}
+
+
+def rebuild_balances() -> Dict:
+    """Rebuild balances table."""
+    try:
+        response = requests.post(
+            f"{ORDER_EXECUTOR_URL}/admin/rebuild-balances",
+            json={},
+            timeout=30
+        )
+        response.raise_for_status()
+        return {"success": True, "data": response.json()}
+    except requests.exceptions.RequestException as e:
+        return {"success": False, "error": str(e)}
+
+
+# Page Title
+st.title("📊 Order Management")
+st.caption("Manual order placement and testing interface for order-executor service")
+
+# Check service health
+if not check_service_health():
+    st.error("⚠️ Order Executor Service is not running!")
+    st.info("Please start the order-executor service: `docker compose up -d order-executor`")
+    st.stop()
+
+st.success("✅ Order Executor Service is running")
+
+# Tabs for different functions
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "Place Order",
+    "Orders",
+    "Trades",
+    "Positions",
+    "Balances",
+    "Admin"
+])
+
+# Tab 1: Place Order
+with tab1:
+    st.header("Place New Order")
+    
+    with st.form("place_order_form"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            symbol = st.text_input("Symbol", value="BTCUSDT", help="Trading pair (e.g., BTCUSDT)")
+            side = st.selectbox("Side", ["BUY", "SELL"])
+            order_type = st.selectbox("Order Type", ["MARKET", "LIMIT"], help="MARKET executes immediately, LIMIT waits for price")
+        
+        with col2:
+            quantity = st.number_input("Quantity", min_value=0.0, value=0.001, step=0.001, format="%.6f", help="Base asset quantity")
+            price = st.number_input("Price", min_value=0.0, value=0.0, step=0.01, format="%.2f", help="Required for LIMIT orders")
+            book_id = st.text_input("Book ID", value="default", help="Book identifier for grouping orders")
+        
+        notes = st.text_input("Notes (optional)", value="", help="Additional notes for this order")
+        
+        submitted = st.form_submit_button("Place Order", type="primary")
+        
+        if submitted:
+            if not symbol:
+                st.error("Symbol is required")
+            elif order_type == "LIMIT" and price <= 0:
+                st.error("Price is required for LIMIT orders")
+            elif quantity <= 0:
+                st.error("Quantity must be greater than 0")
+            else:
+                order_data = {
+                    "symbol": symbol.upper(),
+                    "side": side,
+                    "order_type": order_type,
+                    "quantity": quantity,
+                    "book_id": book_id,
+                }
+                
+                if order_type == "LIMIT" and price > 0:
+                    order_data["price"] = price
+                    order_data["time_in_force"] = "GTC"
+                
+                if notes:
+                    order_data["notes"] = notes
+                
+                with st.spinner("Placing order..."):
+                    result = place_order(order_data)
+                
+                if result["success"]:
+                    st.success("✅ Order placed successfully!")
+                    st.json(result["data"])
+                else:
+                    st.error(f"❌ Failed to place order: {result.get('error', 'Unknown error')}")
+
+# Tab 2: Orders
+with tab2:
+    st.header("Order History")
+    
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        filter_symbol = st.text_input("Filter by Symbol (optional)", value="", placeholder="e.g., BTCUSDT")
+    with col2:
+        limit = st.number_input("Limit", min_value=1, max_value=500, value=50)
+    
+    if st.button("Refresh Orders", type="primary"):
+        with st.spinner("Loading orders..."):
+            result = get_orders(symbol=filter_symbol.upper() if filter_symbol else None, limit=limit)
+        
+        if result["success"]:
+            orders = result["data"].get("orders", [])
+            st.success(f"✅ Found {len(orders)} orders")
+            
+            if orders:
+                # Display orders in a table
+                for order in orders:
+                    with st.expander(f"Order #{order.get('id')} - {order.get('symbol')} {order.get('side')} {order.get('order_type')}"):
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Status", order.get("status", "N/A"))
+                            st.metric("Quantity", f"{order.get('quantity', 0):.6f}")
+                        with col2:
+                            st.metric("Price", f"{order.get('price', 0):.2f}" if order.get('price') else "N/A")
+                            st.metric("Executed Qty", f"{order.get('executed_qty', 0):.6f}")
+                        with col3:
+                            if order.get('exchange_order_id'):
+                                st.metric("Exchange ID", str(order.get('exchange_order_id')))
+                            if order.get('created_at'):
+                                created = datetime.fromtimestamp(order['created_at'] / 1000)
+                                st.caption(f"Created: {created.strftime('%Y-%m-%d %H:%M:%S')}")
+                        
+                        if order.get('notes'):
+                            st.caption(f"Notes: {order.get('notes')}")
+                        
+                        # Cancel button
+                        if order.get('status') in ['NEW', 'PARTIALLY_FILLED']:
+                            if st.button(f"Cancel Order #{order.get('id')}", key=f"cancel_{order.get('id')}"):
+                                cancel_result = cancel_order(order['id'])
+                                if cancel_result["success"]:
+                                    st.success("Order cancelled!")
+                                    st.rerun()
+                                else:
+                                    st.error(f"Failed to cancel: {cancel_result.get('error')}")
+            else:
+                st.info("No orders found")
+        else:
+            st.error(f"❌ Failed to load orders: {result.get('error', 'Unknown error')}")
+
+# Tab 3: Trades
+with tab3:
+    st.header("Trade History")
+    
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        filter_symbol = st.text_input("Filter by Symbol (optional)", value="", key="trade_symbol", placeholder="e.g., BTCUSDT")
+    with col2:
+        limit = st.number_input("Limit", min_value=1, max_value=500, value=50, key="trade_limit")
+    
+    if st.button("Refresh Trades", type="primary", key="refresh_trades"):
+        with st.spinner("Loading trades..."):
+            result = get_trades(symbol=filter_symbol.upper() if filter_symbol else None, limit=limit)
+        
+        if result["success"]:
+            trades = result["data"].get("trades", [])
+            st.success(f"✅ Found {len(trades)} trades")
+            
+            if trades:
+                for trade in trades:
+                    with st.expander(f"Trade #{trade.get('id')} - {trade.get('symbol')} {trade.get('side')} @ {trade.get('price', 0):.2f}"):
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Quantity", f"{trade.get('quantity', 0):.6f}")
+                            st.metric("Price", f"{trade.get('price', 0):.2f}")
+                        with col2:
+                            st.metric("Total", f"{trade.get('quantity', 0) * trade.get('price', 0):.2f}")
+                            if trade.get('commission'):
+                                st.metric("Commission", f"{trade.get('commission', 0):.6f} {trade.get('commission_asset', '')}")
+                        with col3:
+                            if trade.get('traded_at'):
+                                traded = datetime.fromtimestamp(trade['traded_at'] / 1000)
+                                st.caption(f"Traded: {traded.strftime('%Y-%m-%d %H:%M:%S')}")
+                            if trade.get('order_id'):
+                                st.caption(f"Order ID: {trade.get('order_id')}")
+            else:
+                st.info("No trades found")
+        else:
+            st.error(f"❌ Failed to load trades: {result.get('error', 'Unknown error')}")
+
+# Tab 4: Positions
+with tab4:
+    st.header("Current Positions")
+    
+    filter_symbol = st.text_input("Filter by Symbol (optional)", value="", key="pos_symbol", placeholder="e.g., BTCUSDT")
+    
+    if st.button("Refresh Positions", type="primary", key="refresh_positions"):
+        with st.spinner("Loading positions..."):
+            result = get_positions(symbol=filter_symbol.upper() if filter_symbol else None)
+        
+        if result["success"]:
+            positions = result["data"].get("positions", [])
+            st.success(f"✅ Found {len(positions)} positions")
+            
+            if positions:
+                for pos in positions:
+                    with st.expander(f"{pos.get('symbol')} - Quantity: {pos.get('quantity', 0):.6f}"):
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("Quantity", f"{pos.get('quantity', 0):.6f}")
+                            st.metric("Book ID", pos.get('book_id', 'N/A'))
+                        with col2:
+                            if pos.get('avg_price'):
+                                st.metric("Avg Price", f"{pos.get('avg_price', 0):.2f}")
+                            if pos.get('updated_at'):
+                                updated = datetime.fromtimestamp(pos['updated_at'] / 1000)
+                                st.caption(f"Updated: {updated.strftime('%Y-%m-%d %H:%M:%S')}")
+            else:
+                st.info("No positions found")
+        else:
+            st.error(f"❌ Failed to load positions: {result.get('error', 'Unknown error')}")
+
+# Tab 5: Balances
+with tab5:
+    st.header("Account Balances")
+    
+    filter_asset = st.text_input("Filter by Asset (optional)", value="", key="balance_asset", placeholder="e.g., USDT")
+    
+    if st.button("Refresh Balances", type="primary", key="refresh_balances"):
+        with st.spinner("Loading balances..."):
+            result = get_balances(asset=filter_asset.upper() if filter_asset else None)
+        
+        if result["success"]:
+            balances = result["data"].get("balances", [])
+            st.success(f"✅ Found {len(balances)} balances")
+            
+            if balances:
+                # Group by asset
+                assets = {}
+                for bal in balances:
+                    asset = bal.get('asset', 'UNKNOWN')
+                    if asset not in assets:
+                        assets[asset] = []
+                    assets[asset].append(bal)
+                
+                for asset, asset_balances in assets.items():
+                    with st.expander(f"{asset} - Total: {sum(b.get('balance', 0) for b in asset_balances):.6f}"):
+                        for bal in asset_balances:
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.metric("Balance", f"{bal.get('balance', 0):.6f}")
+                                st.metric("Book ID", bal.get('book_id', 'N/A'))
+                            with col2:
+                                if bal.get('updated_at'):
+                                    updated = datetime.fromtimestamp(bal['updated_at'] / 1000)
+                                    st.caption(f"Updated: {updated.strftime('%Y-%m-%d %H:%M:%S')}")
+            else:
+                st.info("No balances found")
+        else:
+            st.error(f"❌ Failed to load balances: {result.get('error', 'Unknown error')}")
+
+# Tab 6: Admin
+with tab6:
+    st.header("Admin Functions")
+    st.warning("⚠️ Admin functions - use with caution")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("Rebuild Positions")
+        st.caption("Rebuild positions table from trades")
+        if st.button("Rebuild Positions", type="primary", key="rebuild_pos"):
+            with st.spinner("Rebuilding positions..."):
+                result = rebuild_positions()
+            if result["success"]:
+                st.success("✅ Positions rebuilt successfully!")
+                st.json(result["data"])
+            else:
+                st.error(f"❌ Failed: {result.get('error', 'Unknown error')}")
+    
+    with col2:
+        st.subheader("Rebuild Balances")
+        st.caption("Rebuild balances table from trades")
+        if st.button("Rebuild Balances", type="primary", key="rebuild_bal"):
+            with st.spinner("Rebuilding balances..."):
+                result = rebuild_balances()
+            if result["success"]:
+                st.success("✅ Balances rebuilt successfully!")
+                st.json(result["data"])
+            else:
+                st.error(f"❌ Failed: {result.get('error', 'Unknown error')}")
