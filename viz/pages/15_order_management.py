@@ -15,8 +15,7 @@ if str(_root) not in sys.path:
 import requests
 import streamlit as st
 from datetime import datetime
-import sys
-from pathlib import Path
+import pandas as pd
 
 # Add project root to path for config access
 _root = Path(__file__).resolve().parent.parent.parent
@@ -388,35 +387,47 @@ with tab2:
             st.success(f"✅ Found {len(orders)} orders")
             
             if orders:
-                # Display orders in a table
+                # Convert to DataFrame for table display
+                orders_data = []
                 for order in orders:
-                    with st.expander(f"Order #{order.get('id')} - {order.get('symbol')} {order.get('side')} {order.get('order_type')}"):
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Status", order.get("status", "N/A"))
-                            st.metric("Quantity", f"{order.get('quantity', 0):.6f}")
-                        with col2:
-                            st.metric("Price", f"{order.get('price', 0):.2f}" if order.get('price') else "N/A")
-                            st.metric("Executed Qty", f"{order.get('executed_qty', 0):.6f}")
-                        with col3:
-                            if order.get('exchange_order_id'):
-                                st.metric("Exchange ID", str(order.get('exchange_order_id')))
-                            if order.get('created_at'):
-                                created = datetime.fromtimestamp(order['created_at'] / 1000)
-                                st.caption(f"Created: {created.strftime('%Y-%m-%d %H:%M:%S')}")
-                        
-                        if order.get('notes'):
-                            st.caption(f"Notes: {order.get('notes')}")
-                        
-                        # Cancel button
-                        if order.get('status') in ['NEW', 'PARTIALLY_FILLED']:
-                            if st.button(f"Cancel Order #{order.get('id')}", key=f"cancel_{order.get('id')}"):
+                    created_str = ""
+                    if order.get('created_at'):
+                        created = datetime.fromtimestamp(order['created_at'] / 1000)
+                        created_str = created.strftime('%Y-%m-%d %H:%M:%S')
+                    
+                    orders_data.append({
+                        "ID": order.get('id'),
+                        "Symbol": order.get('symbol', 'N/A'),
+                        "Side": order.get('side', 'N/A'),
+                        "Type": order.get('order_type', 'N/A'),
+                        "Status": order.get('status', 'N/A'),
+                        "Quantity": f"{order.get('quantity', 0):.6f}",
+                        "Price": f"{order.get('price', 0):.2f}" if order.get('price') else "N/A",
+                        "Executed Qty": f"{order.get('executed_qty', 0):.6f}",
+                        "Exchange ID": str(order.get('exchange_order_id', 'N/A')),
+                        "Book ID": order.get('book_id', 'N/A'),
+                        "Created": created_str,
+                        "Notes": order.get('notes', '')[:50] + "..." if order.get('notes') and len(order.get('notes', '')) > 50 else order.get('notes', ''),
+                    })
+                
+                df_orders = pd.DataFrame(orders_data)
+                st.dataframe(df_orders, use_container_width=True, hide_index=True)
+                
+                # Cancel buttons for active orders
+                st.subheader("Cancel Orders")
+                cancel_cols = st.columns(min(3, len([o for o in orders if o.get('status') in ['NEW', 'PARTIALLY_FILLED']])))
+                cancel_idx = 0
+                for order in orders:
+                    if order.get('status') in ['NEW', 'PARTIALLY_FILLED']:
+                        with cancel_cols[cancel_idx % len(cancel_cols)]:
+                            if st.button(f"Cancel #{order.get('id')}", key=f"cancel_{order.get('id')}", use_container_width=True):
                                 cancel_result = cancel_order(order['id'])
                                 if cancel_result["success"]:
                                     st.success("Order cancelled!")
                                     st.rerun()
                                 else:
-                                    st.error(f"Failed to cancel: {cancel_result.get('error')}")
+                                    st.error(f"Failed: {cancel_result.get('error')}")
+                        cancel_idx += 1
             else:
                 st.info("No orders found")
         else:
@@ -456,22 +467,35 @@ with tab3:
             st.success(f"✅ Found {len(trades)} trades")
             
             if trades:
+                # Convert to DataFrame for table display
+                trades_data = []
                 for trade in trades:
-                    with st.expander(f"Trade #{trade.get('id')} - {trade.get('symbol')} {trade.get('side')} @ {trade.get('price', 0):.2f}"):
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Quantity", f"{trade.get('quantity', 0):.6f}")
-                            st.metric("Price", f"{trade.get('price', 0):.2f}")
-                        with col2:
-                            st.metric("Total", f"{trade.get('quantity', 0) * trade.get('price', 0):.2f}")
-                            if trade.get('commission'):
-                                st.metric("Commission", f"{trade.get('commission', 0):.6f} {trade.get('commission_asset', '')}")
-                        with col3:
-                            if trade.get('traded_at'):
-                                traded = datetime.fromtimestamp(trade['traded_at'] / 1000)
-                                st.caption(f"Traded: {traded.strftime('%Y-%m-%d %H:%M:%S')}")
-                            if trade.get('order_id'):
-                                st.caption(f"Order ID: {trade.get('order_id')}")
+                    traded_str = ""
+                    if trade.get('traded_at'):
+                        traded = datetime.fromtimestamp(trade['traded_at'] / 1000)
+                        traded_str = traded.strftime('%Y-%m-%d %H:%M:%S')
+                    
+                    total_value = trade.get('quantity', 0) * trade.get('price', 0)
+                    commission_str = ""
+                    if trade.get('commission'):
+                        commission_str = f"{trade.get('commission', 0):.6f} {trade.get('commission_asset', '')}"
+                    
+                    trades_data.append({
+                        "ID": trade.get('id'),
+                        "Symbol": trade.get('symbol', 'N/A'),
+                        "Side": trade.get('side', 'N/A'),
+                        "Quantity": f"{trade.get('quantity', 0):.6f}",
+                        "Price": f"{trade.get('price', 0):.2f}",
+                        "Total": f"{total_value:.2f}",
+                        "Commission": commission_str or "N/A",
+                        "Order ID": trade.get('order_id', 'N/A'),
+                        "Exchange Trade ID": trade.get('exchange_trade_id', 'N/A'),
+                        "Book ID": trade.get('book_id', 'N/A'),
+                        "Traded At": traded_str,
+                    })
+                
+                df_trades = pd.DataFrame(trades_data)
+                st.dataframe(df_trades, use_container_width=True, hide_index=True)
             else:
                 st.info("No trades found")
         else:
@@ -508,18 +532,28 @@ with tab4:
             st.success(f"✅ Found {len(positions)} positions")
             
             if positions:
+                # Convert to DataFrame for table display
+                positions_data = []
                 for pos in positions:
-                    with st.expander(f"{pos.get('symbol')} - Quantity: {pos.get('quantity', 0):.6f}"):
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.metric("Quantity", f"{pos.get('quantity', 0):.6f}")
-                            st.metric("Book ID", pos.get('book_id', 'N/A'))
-                        with col2:
-                            if pos.get('avg_price'):
-                                st.metric("Avg Price", f"{pos.get('avg_price', 0):.2f}")
-                            if pos.get('updated_at'):
-                                updated = datetime.fromtimestamp(pos['updated_at'] / 1000)
-                                st.caption(f"Updated: {updated.strftime('%Y-%m-%d %H:%M:%S')}")
+                    updated_str = ""
+                    if pos.get('updated_at'):
+                        updated = datetime.fromtimestamp(pos['updated_at'] / 1000)
+                        updated_str = updated.strftime('%Y-%m-%d %H:%M:%S')
+                    
+                    total_value = pos.get('quantity', 0) * pos.get('avg_price', 0) if pos.get('avg_price') else 0
+                    
+                    positions_data.append({
+                        "Symbol": pos.get('symbol', 'N/A'),
+                        "Quantity": f"{pos.get('quantity', 0):.6f}",
+                        "Avg Price": f"{pos.get('avg_price', 0):.2f}" if pos.get('avg_price') else "N/A",
+                        "Total Value": f"{total_value:.2f}" if pos.get('avg_price') else "N/A",
+                        "Book ID": pos.get('book_id', 'N/A'),
+                        "Venue": pos.get('venue', 'N/A'),
+                        "Updated At": updated_str,
+                    })
+                
+                df_positions = pd.DataFrame(positions_data)
+                st.dataframe(df_positions, use_container_width=True, hide_index=True)
             else:
                 st.info("No positions found")
         else:
@@ -556,25 +590,51 @@ with tab5:
             st.success(f"✅ Found {len(balances)} balances")
             
             if balances:
-                # Group by asset
-                assets = {}
+                # Convert to DataFrame for table display
+                balances_data = []
                 for bal in balances:
-                    asset = bal.get('asset', 'UNKNOWN')
-                    if asset not in assets:
-                        assets[asset] = []
-                    assets[asset].append(bal)
+                    updated_str = ""
+                    if bal.get('updated_at'):
+                        updated = datetime.fromtimestamp(bal['updated_at'] / 1000)
+                        updated_str = updated.strftime('%Y-%m-%d %H:%M:%S')
+                    
+                    total_balance = bal.get('free', 0) + bal.get('locked', 0)
+                    
+                    balances_data.append({
+                        "Asset": bal.get('asset', 'N/A'),
+                        "Free": f"{bal.get('free', 0):.6f}",
+                        "Locked": f"{bal.get('locked', 0):.6f}",
+                        "Total": f"{total_balance:.6f}",
+                        "Book ID": bal.get('book_id', 'N/A'),
+                        "Venue": bal.get('venue', 'N/A'),
+                        "Updated At": updated_str,
+                    })
                 
-                for asset, asset_balances in assets.items():
-                    with st.expander(f"{asset} - Total: {sum(b.get('balance', 0) for b in asset_balances):.6f}"):
-                        for bal in asset_balances:
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                st.metric("Balance", f"{bal.get('balance', 0):.6f}")
-                                st.metric("Book ID", bal.get('book_id', 'N/A'))
-                            with col2:
-                                if bal.get('updated_at'):
-                                    updated = datetime.fromtimestamp(bal['updated_at'] / 1000)
-                                    st.caption(f"Updated: {updated.strftime('%Y-%m-%d %H:%M:%S')}")
+                df_balances = pd.DataFrame(balances_data)
+                st.dataframe(df_balances, use_container_width=True, hide_index=True)
+                
+                # Summary by asset
+                if balances:
+                    st.subheader("Summary by Asset")
+                    asset_summary = {}
+                    for bal in balances:
+                        asset = bal.get('asset', 'UNKNOWN')
+                        if asset not in asset_summary:
+                            asset_summary[asset] = {'free': 0.0, 'locked': 0.0}
+                        asset_summary[asset]['free'] += bal.get('free', 0)
+                        asset_summary[asset]['locked'] += bal.get('locked', 0)
+                    
+                    summary_data = []
+                    for asset, totals in asset_summary.items():
+                        summary_data.append({
+                            "Asset": asset,
+                            "Total Free": f"{totals['free']:.6f}",
+                            "Total Locked": f"{totals['locked']:.6f}",
+                            "Grand Total": f"{totals['free'] + totals['locked']:.6f}",
+                        })
+                    
+                    df_summary = pd.DataFrame(summary_data)
+                    st.dataframe(df_summary, use_container_width=True, hide_index=True)
             else:
                 st.info("No balances found")
         else:
