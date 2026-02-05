@@ -10,7 +10,10 @@ class OrderManager:
     """Submit/cancel orders and query status/fills via execution clients."""
 
     def __init__(self, binance_client: Optional[BinanceClient] = None) -> None:
-        self._binance = binance_client or BinanceClient()
+        # Use testnet for orders if configured, otherwise use default
+        if binance_client is None:
+            binance_client = BinanceClient(use_testnet=settings.use_testnet_for_orders)
+        self._binance = binance_client
 
     def submit_market(
         self,

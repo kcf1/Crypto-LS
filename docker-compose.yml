@@ -125,6 +125,26 @@ services:
           memory: 512M
           cpus: '0.5'
 
+  fill-sync:
+    build:
+      context: .
+      dockerfile: Dockerfile.executor
+    container_name: crypto-ls-fill-sync
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://crypto:crypto@postgres:5432/cryptols
+    command: ["python", "scripts/services/run_fill_sync.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.2'
+
 volumes:
   postgres_data:
   redis_data:

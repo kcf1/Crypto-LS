@@ -142,6 +142,20 @@ class BookingOrchestrator:
                 notes=notes,
             )
             
+            # Immediately sync fills for the order (non-blocking, with error handling)
+            try:
+                self.sync_fills_for_order(
+                    symbol=symbol,
+                    exchange_order_id=exchange_order_id,
+                    ledger_order_id=ledger_order_id,
+                    book_id=book_id,
+                )
+            except Exception as e:
+                # Log error but don't fail order placement if fill sync fails
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to sync fills for order {exchange_order_id}: {e}")
+            
             return {
                 "ledger_order_id": ledger_order_id,
                 "exchange_order_id": exchange_order_id,
@@ -309,7 +323,7 @@ class BookingOrchestrator:
         if since:
             kwargs["startTime"] = since
         
-        trades = self._order_manager.get_my_trades(symbol=symbol, **kwargs)
+        trades = self._order_manager.get_fills(symbol=symbol, **kwargs)
         
         ledger_trade_ids = []
         for trade in trades:

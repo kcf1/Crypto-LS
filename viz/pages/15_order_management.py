@@ -125,6 +125,18 @@ def get_books(venue: Optional[str] = None, active_only: bool = True) -> Dict:
         return {"success": False, "error": str(e)}
 
 
+# Load books for dropdowns (cache for performance)
+@st.cache_data(ttl=60)
+def load_books_for_dropdown():
+    """Load active books for dropdown selection."""
+    result = get_books(venue=settings.venue, active_only=True)
+    if result["success"]:
+        books = result["data"].get("books", [])
+        # Return as list of tuples: (display_name, book_id)
+        return [(f"{b['name']} ({b['id']})", b['id']) for b in books]
+    return [("Default Book (default)", "default")]
+
+
 def create_book(book_data: Dict) -> Dict:
     """Create a new book."""
     try:

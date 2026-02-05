@@ -1,8 +1,14 @@
 """Fill sync service: periodically syncs fills from Binance and books them."""
 
+import sys
 import time
 import logging
+from pathlib import Path
 from typing import Dict, Optional
+
+# Add project root to path
+if str(Path(__file__).resolve().parent.parent.parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from booking.ledger import Ledger
 from config import settings
