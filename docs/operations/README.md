@@ -19,13 +19,8 @@ operations/
 ├── operations/         # Daily Operations
 │   └── booking-and-recon.md
 │
-├── sops/              # Standard Operating Procedures
-│   └── sop-add-new-data-table.md
-│
-└── gui/               # GUI Tools Manuals
-    ├── README.md
-    ├── redisinsight-usage-manual.md
-    └── redis-gui-setup.md
+└── sops/              # Standard Operating Procedures
+    └── sop-add-new-data-table.md
 ```
 
 ## Available Manuals
@@ -68,6 +63,21 @@ operations/
   - Extending the framework
   - Troubleshooting
 
+- **[RedisInsight GUI](monitoring/redis-gui-setup.md)**
+  - RedisInsight setup and access
+  - Connecting to Redis
+  - Basic usage
+
+- **[RedisInsight Usage Manual](monitoring/redisinsight-usage-manual.md)**
+  - Comprehensive RedisInsight guide
+  - Browser - Key management
+  - CLI - Command execution
+  - Profiler - Performance monitoring
+  - Analysis - Database insights
+  - Streams management
+  - Common operations
+  - Troubleshooting
+
 ### Daily Operations (`operations/`)
 
 **Day-to-day operational procedures:**
@@ -91,13 +101,6 @@ operations/
   - Service updates
   - Complete checklist
 
-### GUI Tools (`gui/`)
-
-**GUI tools for managing and monitoring:**
-
-- **[RedisInsight](gui/README.md)** - Redis management GUI
-  - [Usage Manual](gui/redisinsight-usage-manual.md) - Comprehensive guide
-  - [Setup Guide](gui/redis-gui-setup.md) - Setup and access
 
 ## Quick Reference
 
