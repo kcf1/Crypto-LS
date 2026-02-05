@@ -369,6 +369,17 @@ WHERE b.id IS NULL;
 SELECT o.* FROM orders o
 LEFT JOIN books b ON o.book_id = b.id
 WHERE b.id IS NULL;
+
+-- Check invalid records (record_status != 'VALID')
+SELECT COUNT(*) as invalid_orders FROM orders WHERE record_status != 'VALID';
+SELECT COUNT(*) as invalid_trades FROM trades WHERE record_status != 'VALID';
+SELECT COUNT(*) as invalid_adjustments FROM adjustments WHERE record_status != 'VALID';
+
+-- View invalid trades
+SELECT id, symbol, exchange_trade_id, record_status, notes 
+FROM trades 
+WHERE record_status != 'VALID' 
+ORDER BY traded_at DESC;
 ```
 
 ### 4.3 Check Data Consistency
@@ -618,7 +629,7 @@ curl "http://localhost:8000/admin/reconciliation?book_id=test_book" | jq
 - Wrong order status (Rec 1, Rec 5)
 - Position drift (Rec 3)
 - Balance drift (Rec 6)
-- Extra records (Rec 2, Rec 5)
+- Extra records (Rec 2, Rec 5) - These are automatically marked as `record_status='INVALID'` by the fix script
 
 ---
 
@@ -669,6 +680,29 @@ curl -X POST http://localhost:8000/admin/manual-trade \
   }'
 ```
 
+**Invalid records:**
+```bash
+# Mark trade as invalid (e.g., not found in Binance)
+# The fix_reconciliation_breaks.py script automatically does this for extra trades
+# Manual marking via Python:
+from booking.ledger import Ledger
+ledger = Ledger()
+ledger.update_trade_record_status(
+    ledger_trade_id=123,
+    record_status="INVALID",
+    notes="Not found in Binance - marked manually"
+)
+
+# Query only valid records (default behavior)
+orders = ledger.get_orders(book_id="test_book", record_status="VALID")
+trades = ledger.get_trades(book_id="test_book", record_status="VALID")
+
+# Query invalid records for review
+invalid_trades = ledger.get_trades(book_id="test_book", record_status="INVALID")
+```
+
+**Note**: The system now uses `record_status` instead of notes to mark invalid records. Invalid records are automatically excluded from reconciliation checks and position/balance calculations.
+
 **Rebuild positions:**
 ```bash
 # Via API
@@ -713,6 +747,40 @@ curl -X POST http://localhost:8000/admin/adjustments \
     "created_by": "admin"
   }'
 ```
+
+**Mark records as invalid:**
+```python
+from booking.ledger import Ledger
+
+ledger = Ledger()
+
+# Mark trade as invalid
+ledger.update_trade_record_status(
+    ledger_trade_id=123,
+    record_status="INVALID",
+    notes="Not found in Binance exchange"
+)
+
+# Mark order as invalid
+ledger.update_order_record_status(
+    ledger_order_id=456,
+    record_status="INVALID",
+    notes="Order not found on exchange"
+)
+
+# Mark adjustment as invalid
+ledger.update_adjustment_record_status(
+    ledger_adjustment_id=789,
+    record_status="INVALID",
+    notes="Adjustment made in error"
+)
+```
+
+**Note**: Invalid records are automatically excluded from:
+- Reconciliation checks (only VALID records are compared)
+- Position calculations (only VALID trades are used)
+- Balance calculations (only VALID trades are used)
+- Default API queries (only VALID records returned)
 
 ### 8.3 Fix Service Issues
 

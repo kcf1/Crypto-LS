@@ -36,15 +36,16 @@ def rec1_orders_vs_trades(ledger: Ledger, book_id: Optional[str] = None) -> Dict
     logger.info("Running Rec 1: Orders vs Trades")
     
     mismatches = []
-    orders = ledger.get_orders(book_id=book_id)
+    # Only check VALID orders and trades (default behavior, but explicit for clarity)
+    orders = ledger.get_orders(book_id=book_id, record_status="VALID")
     
     for order in orders:
         order_id = order["id"]
         order_quantity = order["quantity"]
         order_status = order["status"]
         
-        # Sum filled quantity from trades
-        trades = ledger.get_trades(order_id=order_id, book_id=book_id)
+        # Sum filled quantity from VALID trades only
+        trades = ledger.get_trades(order_id=order_id, book_id=book_id, record_status="VALID")
         filled_quantity = sum(t["quantity"] for t in trades)
         
         # Check consistency
@@ -86,7 +87,8 @@ def rec2_trades_vs_binance(ledger: Ledger, binance_client: BinanceClient, book_i
     # Get symbols with recent trades (last 7 days)
     seven_days_ago = int((time.time() - 7 * 24 * 3600) * 1000)
     
-    trades = ledger.get_trades(book_id=book_id)
+    # Only check VALID trades (default behavior, but explicit for clarity)
+    trades = ledger.get_trades(book_id=book_id, record_status="VALID")
     recent_trades = [t for t in trades if t["traded_at"] >= seven_days_ago]
     
     symbols_with_trades = set(t["symbol"] for t in recent_trades)
@@ -170,8 +172,8 @@ def rec3_positions_vs_trades(ledger: Ledger, book_id: Optional[str] = None) -> D
         ledger_quantity = position["quantity"]
         ledger_avg_price = position["avg_price"]
         
-        # Calculate position from trades
-        trades = ledger.get_trades(symbol=symbol, book_id=book_id_val)
+        # Calculate position from VALID trades only
+        trades = ledger.get_trades(symbol=symbol, book_id=book_id_val, record_status="VALID")
         calculated_quantity = sum(
             t["quantity"] if t["side"] == "BUY" else -t["quantity"]
             for t in trades
@@ -271,8 +273,9 @@ def rec5_orders_vs_binance(ledger: Ledger, binance_client: BinanceClient, book_i
     logger.info("Running Rec 5: Orders vs Binance")
     
     # Get open orders and recent orders from ledger (last 7 days)
+    # Only check VALID orders (default behavior, but explicit for clarity)
     seven_days_ago = int((time.time() - 7 * 24 * 3600) * 1000)
-    all_orders = ledger.get_orders(book_id=book_id)
+    all_orders = ledger.get_orders(book_id=book_id, record_status="VALID")
     recent_orders = [o for o in all_orders if o.get("created_at", 0) >= seven_days_ago]
     
     mismatches = []

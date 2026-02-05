@@ -178,24 +178,16 @@ def fix_rec2_trades_vs_binance(
                         created_by="reconciliation_fix_script",
                         notes=f"Ledger trade_id: {trade.get('ledger_trade_id')}, "
                               f"Exchange trade_id: {trade['exchange_trade_id']}",
+                        record_status="VALID",  # Adjustment record itself is valid
                     )
                     
-                    # Optionally: Update trade notes to mark as invalid
-                    # (We don't delete trades to maintain audit trail)
-                    with ledger._engine.connect() as conn:
-                        from sqlalchemy import text
-                        conn.execute(
-                            text("""
-                                UPDATE trades 
-                                SET notes = COALESCE(notes || ' | ', '') || :note
-                                WHERE id = :trade_id
-                            """),
-                            {
-                                "trade_id": trade.get("ledger_trade_id"),
-                                "note": "[INVALID] Not found in Binance - marked by reconciliation fix",
-                            },
-                        )
-                        conn.commit()
+                    # Mark trade as INVALID using record_status (maintains audit trail)
+                    ledger.update_trade_record_status(
+                        ledger_trade_id=trade.get("ledger_trade_id"),
+                        record_status="INVALID",
+                        notes=f"Not found in Binance - marked by reconciliation fix script. "
+                              f"Original notes: {trade.get('notes', '')}",
+                    )
                     
                     logger.info(
                         f"Marked trade {trade['exchange_trade_id']} as invalid "
@@ -232,8 +224,8 @@ def fix_rec2_trades_vs_binance(
         # Try to sync fills for this symbol
         # This will use the order-driven approach to find and book missing trades
         try:
-            # Get all orders for this symbol to find which book they belong to
-            orders = ledger.get_orders(symbol=symbol, book_id=book_id)
+            # Get all VALID orders for this symbol to find which book they belong to
+            orders = ledger.get_orders(symbol=symbol, book_id=book_id, record_status="VALID")
             
             # For each missing trade, try to find matching order
             for trade in trades:

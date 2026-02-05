@@ -202,7 +202,8 @@ class BookingOrchestrator:
         if exchange_order_id is None:
             if ledger_order_id is None:
                 raise ValueError("Either ledger_order_id or exchange_order_id must be provided")
-            orders = self._ledger.get_orders(limit=1)
+            # Only query VALID orders (default behavior)
+            orders = self._ledger.get_orders(record_status="VALID", limit=1)
             order = next((o for o in orders if o["id"] == ledger_order_id), None)
             if not order:
                 raise ValueError(f"Order {ledger_order_id} not found")
@@ -276,11 +277,13 @@ class BookingOrchestrator:
             commission_asset = fill.get("commissionAsset")
             traded_at = fill.get("time", 0)
             
-            # Idempotency check
+            # Idempotency check - check all record_statuses to avoid duplicates
+            # (but we'll only book if it doesn't exist)
             existing_trades = self._ledger.get_trades(
                 venue=self._venue,
                 book_id=book_id,
                 exchange_trade_id=exchange_trade_id,
+                record_status=None,  # Check all statuses for idempotency
             )
             if existing_trades:
                 ledger_trade_ids.append(existing_trades[0]["id"])
@@ -332,11 +335,13 @@ class BookingOrchestrator:
         unfilled_statuses = ["NEW", "PARTIALLY_FILLED"]
         unfilled_orders = []
         for status in unfilled_statuses:
+            # Only process VALID orders
             orders = self._ledger.get_orders(
                 symbol=symbol,
                 venue=self._venue,
                 book_id=book_id,
                 status=status,
+                record_status="VALID",  # Only process valid orders
             )
             unfilled_orders.extend(orders)
         
@@ -382,11 +387,12 @@ class BookingOrchestrator:
                 if not binance_trades:
                     continue
                 
-                # Get existing trades for this order from ledger
+                # Get existing VALID trades for this order from ledger
                 existing_trades = self._ledger.get_trades(
                     venue=self._venue,
                     book_id=order_book_id,
                     order_id=order_id,
+                    record_status="VALID",  # Only sync valid trades
                 )
                 existing_trade_ids = {t["exchange_trade_id"] for t in existing_trades}
                 

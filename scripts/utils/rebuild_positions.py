@@ -59,7 +59,7 @@ def rebuild_positions(ledger: Ledger, book_id: Optional[str] = None) -> None:
                         END as avg_price,
                         MAX(traded_at) as updated_at
                     FROM trades
-                    WHERE book_id = :book_id
+                    WHERE book_id = :book_id AND record_status = 'VALID'
                     GROUP BY book_id, symbol
                     HAVING ABS(SUM(CASE WHEN side = 'BUY' THEN quantity ELSE -quantity END)) > 1e-12
                 """),
@@ -79,6 +79,7 @@ def rebuild_positions(ledger: Ledger, book_id: Optional[str] = None) -> None:
                         END as avg_price,
                         MAX(traded_at) as updated_at
                     FROM trades
+                    WHERE record_status = 'VALID'
                     GROUP BY book_id, symbol
                     HAVING ABS(SUM(CASE WHEN side = 'BUY' THEN quantity ELSE -quantity END)) > 1e-12
                 """),

@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS orders (
     quantity REAL NOT NULL,
     price REAL,
     status TEXT NOT NULL,
+    record_status TEXT NOT NULL DEFAULT 'VALID',
     created_at INTEGER NOT NULL,
     updated_at INTEGER,
     notes TEXT
@@ -37,6 +38,7 @@ CREATE TABLE IF NOT EXISTS trades (
     price REAL NOT NULL,
     commission REAL DEFAULT 0,
     traded_at INTEGER NOT NULL,
+    record_status TEXT NOT NULL DEFAULT 'VALID',
     notes TEXT,
     FOREIGN KEY (order_id) REFERENCES orders(id)
 );
@@ -68,6 +70,7 @@ CREATE TABLE IF NOT EXISTS adjustments (
     reason TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     created_by TEXT,
+    record_status TEXT NOT NULL DEFAULT 'VALID',
     notes TEXT
 );
 CREATE TABLE IF NOT EXISTS books (
@@ -160,6 +163,7 @@ class Ledger:
         updated_at: Optional[int] = None,
         book_id: str = "default",
         notes: Optional[str] = None,
+        record_status: str = "VALID",
     ) -> int:
         """Record an order; returns ledger order id. Idempotent: returns existing id if order already exists."""
         with self._engine.connect() as conn:
@@ -183,8 +187,8 @@ class Ledger:
                 result = conn.execute(
                     text("""
                         INSERT INTO orders
-                        (venue, book_id, exchange_order_id, symbol, side, order_type, quantity, price, status, created_at, updated_at, notes)
-                        VALUES (:venue, :book_id, :exchange_order_id, :symbol, :side, :order_type, :quantity, :price, :status, :created_at, :updated_at, :notes)
+                        (venue, book_id, exchange_order_id, symbol, side, order_type, quantity, price, status, record_status, created_at, updated_at, notes)
+                        VALUES (:venue, :book_id, :exchange_order_id, :symbol, :side, :order_type, :quantity, :price, :status, :record_status, :created_at, :updated_at, :notes)
                         RETURNING id
                     """),
                     {
@@ -197,6 +201,7 @@ class Ledger:
                         "quantity": quantity,
                         "price": price,
                         "status": status.upper(),
+                        "record_status": record_status.upper(),
                         "created_at": created_at,
                         "updated_at": updated_at,
                         "notes": notes,
@@ -238,6 +243,7 @@ class Ledger:
         commission_asset: Optional[str] = None,
         book_id: str = "default",
         notes: Optional[str] = None,
+        record_status: str = "VALID",
     ) -> int:
         """Record a trade (fill) and update position and balances. Returns ledger trade id. Idempotent."""
         with self._engine.connect() as conn:
@@ -262,23 +268,24 @@ class Ledger:
                 result = conn.execute(
                     text("""
                         INSERT INTO trades
-                        (venue, book_id, exchange_trade_id, order_id, symbol, side, quantity, price, commission, traded_at, notes)
-                        VALUES (:venue, :book_id, :exchange_trade_id, :order_id, :symbol, :side, :quantity, :price, :commission, :traded_at, :notes)
+                        (venue, book_id, exchange_trade_id, order_id, symbol, side, quantity, price, commission, traded_at, record_status, notes)
+                        VALUES (:venue, :book_id, :exchange_trade_id, :order_id, :symbol, :side, :quantity, :price, :commission, :traded_at, :record_status, :notes)
                         RETURNING id
                     """),
-                    {
-                        "venue": venue,
-                        "book_id": book_id,
-                        "exchange_trade_id": exchange_trade_id,
-                        "order_id": order_id,
-                        "symbol": symbol,
-                        "side": side.upper(),
-                        "quantity": quantity,
-                        "price": price,
-                        "commission": commission,
-                        "traded_at": traded_at,
-                        "notes": notes,
-                    },
+                        {
+                            "venue": venue,
+                            "book_id": book_id,
+                            "exchange_trade_id": exchange_trade_id,
+                            "order_id": order_id,
+                            "symbol": symbol,
+                            "side": side.upper(),
+                            "quantity": quantity,
+                            "price": price,
+                            "commission": commission,
+                            "traded_at": traded_at,
+                            "record_status": record_status.upper(),
+                            "notes": notes,
+                        },
                 )
                 row = result.fetchone()
                 trade_id = row[0] if row else 0
@@ -588,6 +595,7 @@ class Ledger:
         venue: Optional[str] = None,
         book_id: Optional[str] = None,
         status: Optional[str] = None,
+        record_status: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """Query recorded orders.
@@ -597,9 +605,14 @@ class Ledger:
             venue: Filter by venue
             book_id: Filter by book_id
             status: Filter by status (e.g., "NEW", "PARTIALLY_FILLED", "FILLED")
+            record_status: Filter by record_status (e.g., "VALID", "INVALID", "DELETED"). Defaults to "VALID" if not specified.
             limit: Maximum number of orders to return
         """
-        sql = "SELECT id, venue, book_id, exchange_order_id, symbol, side, order_type, quantity, price, status, created_at, updated_at, notes FROM orders WHERE 1=1"
+        # Default to VALID records if record_status not specified
+        if record_status is None:
+            record_status = "VALID"
+        
+        sql = "SELECT id, venue, book_id, exchange_order_id, symbol, side, order_type, quantity, price, status, record_status, created_at, updated_at, notes FROM orders WHERE 1=1"
         params: dict = {}
         if symbol:
             sql += " AND symbol = :symbol"
@@ -613,6 +626,9 @@ class Ledger:
         if status:
             sql += " AND status = :status"
             params["status"] = status
+        if record_status:
+            sql += " AND record_status = :record_status"
+            params["record_status"] = record_status.upper()
         sql += " ORDER BY created_at DESC"
         if limit is not None:
             sql += " LIMIT :limit"
@@ -632,9 +648,10 @@ class Ledger:
                 "quantity": float(r[7]),
                 "price": float(r[8]) if r[8] is not None else None,
                 "status": r[9],
-                "created_at": r[10],
-                "updated_at": r[11],
-                "notes": r[12],
+                "record_status": r[10],
+                "created_at": r[11],
+                "updated_at": r[12],
+                "notes": r[13],
             }
             for r in rows
         ]
@@ -646,10 +663,25 @@ class Ledger:
         book_id: Optional[str] = None,
         exchange_trade_id: Optional[str] = None,
         order_id: Optional[int] = None,
+        record_status: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """Query recorded trades."""
-        sql = "SELECT id, venue, book_id, exchange_trade_id, order_id, symbol, side, quantity, price, commission, traded_at, notes FROM trades WHERE 1=1"
+        """Query recorded trades.
+        
+        Args:
+            symbol: Filter by symbol
+            venue: Filter by venue
+            book_id: Filter by book_id
+            exchange_trade_id: Filter by exchange_trade_id
+            order_id: Filter by order_id
+            record_status: Filter by record_status (e.g., "VALID", "INVALID", "DELETED"). Defaults to "VALID" if not specified.
+            limit: Maximum number of trades to return
+        """
+        # Default to VALID records if record_status not specified
+        if record_status is None:
+            record_status = "VALID"
+        
+        sql = "SELECT id, venue, book_id, exchange_trade_id, order_id, symbol, side, quantity, price, commission, traded_at, record_status, notes FROM trades WHERE 1=1"
         params: dict = {}
         if symbol:
             sql += " AND symbol = :symbol"
@@ -666,6 +698,9 @@ class Ledger:
         if order_id is not None:
             sql += " AND order_id = :order_id"
             params["order_id"] = order_id
+        if record_status:
+            sql += " AND record_status = :record_status"
+            params["record_status"] = record_status.upper()
         sql += " ORDER BY traded_at DESC"
         if limit is not None:
             sql += " LIMIT :limit"
@@ -686,7 +721,8 @@ class Ledger:
                 "price": float(r[8]),
                 "commission": float(r[9]),
                 "traded_at": r[10],
-                "notes": r[11],
+                "record_status": r[11],
+                "notes": r[12],
             }
             for r in rows
         ]
@@ -738,8 +774,8 @@ class Ledger:
                     conn.execute(
                         text("""
                             INSERT INTO adjustments
-                            (venue, book_id, type, asset_or_symbol, delta_or_value, reason, created_at, notes)
-                            VALUES (:venue, :book_id, :type, :asset_or_symbol, :delta_or_value, :reason, :created_at, :notes)
+                            (venue, book_id, type, asset_or_symbol, delta_or_value, reason, created_at, record_status, notes)
+                            VALUES (:venue, :book_id, :type, :asset_or_symbol, :delta_or_value, :reason, :created_at, :record_status, :notes)
                         """),
                         {
                             "venue": venue,
@@ -749,6 +785,7 @@ class Ledger:
                             "delta_or_value": 0.0,  # Not used for order_status type
                             "reason": reason,
                             "created_at": updated_at,
+                            "record_status": "VALID",
                             "notes": notes,
                         },
                     )
@@ -762,7 +799,7 @@ class Ledger:
         book_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Get order by exchange order ID. Returns None if not found."""
-        sql = "SELECT id, venue, book_id, exchange_order_id, symbol, side, order_type, quantity, price, status, created_at, updated_at, notes FROM orders WHERE venue = :venue AND exchange_order_id = :exchange_order_id"
+        sql = "SELECT id, venue, book_id, exchange_order_id, symbol, side, order_type, quantity, price, status, record_status, created_at, updated_at, notes FROM orders WHERE venue = :venue AND exchange_order_id = :exchange_order_id"
         params: dict = {"venue": venue, "exchange_order_id": exchange_order_id}
         if book_id:
             sql += " AND book_id = :book_id"
@@ -784,9 +821,10 @@ class Ledger:
                 "quantity": float(row[7]),
                 "price": float(row[8]) if row[8] is not None else None,
                 "status": row[9],
-                "created_at": row[10],
-                "updated_at": row[11],
-                "notes": row[12],
+                "record_status": row[10],
+                "created_at": row[11],
+                "updated_at": row[12],
+                "notes": row[13],
             }
     
     def record_adjustment(
@@ -799,6 +837,7 @@ class Ledger:
         reason: str,
         created_by: Optional[str] = None,
         notes: Optional[str] = None,
+        record_status: str = "VALID",
     ) -> int:
         """Record an adjustment and update target table. Returns adjustment id."""
         import time
@@ -809,8 +848,8 @@ class Ledger:
             result = conn.execute(
                 text("""
                     INSERT INTO adjustments
-                    (venue, book_id, type, asset_or_symbol, delta_or_value, reason, created_at, created_by, notes)
-                    VALUES (:venue, :book_id, :type, :asset_or_symbol, :delta_or_value, :reason, :created_at, :created_by, :notes)
+                    (venue, book_id, type, asset_or_symbol, delta_or_value, reason, created_at, created_by, record_status, notes)
+                    VALUES (:venue, :book_id, :type, :asset_or_symbol, :delta_or_value, :reason, :created_at, :created_by, :record_status, :notes)
                     RETURNING id
                 """),
                 {
@@ -822,6 +861,7 @@ class Ledger:
                     "reason": reason,
                     "created_at": created_at,
                     "created_by": created_by,
+                    "record_status": record_status.upper(),
                     "notes": notes,
                 },
             )
@@ -939,10 +979,15 @@ class Ledger:
         venue: Optional[str] = None,
         book_id: Optional[str] = None,
         type: Optional[str] = None,
+        record_status: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """Query adjustments. Returns list of dicts with all adjustment fields."""
-        sql = "SELECT id, venue, book_id, type, asset_or_symbol, delta_or_value, reason, created_at, created_by, notes FROM adjustments WHERE 1=1"
+        # Default to VALID records if record_status not specified
+        if record_status is None:
+            record_status = "VALID"
+        
+        sql = "SELECT id, venue, book_id, type, asset_or_symbol, delta_or_value, reason, created_at, created_by, record_status, notes FROM adjustments WHERE 1=1"
         params: dict = {}
         if venue:
             sql += " AND venue = :venue"
@@ -953,6 +998,9 @@ class Ledger:
         if type:
             sql += " AND type = :type"
             params["type"] = type
+        if record_status:
+            sql += " AND record_status = :record_status"
+            params["record_status"] = record_status.upper()
         sql += " ORDER BY created_at DESC"
         if limit is not None:
             sql += " LIMIT :limit"
@@ -972,7 +1020,8 @@ class Ledger:
                 "reason": r[6],
                 "created_at": r[7],
                 "created_by": r[8],
-                "notes": r[9],
+                "record_status": r[9],
+                "notes": r[10],
             }
             for r in rows
         ]
@@ -1190,3 +1239,118 @@ class Ledger:
             return False
         
         return True
+    
+    def update_order_record_status(
+        self,
+        ledger_order_id: int,
+        record_status: str,
+        notes: Optional[str] = None,
+    ) -> None:
+        """Update order record_status (e.g., VALID, INVALID, DELETED, CANCELLED).
+        
+        Args:
+            ledger_order_id: Internal ledger order ID
+            record_status: New record status (VALID, INVALID, DELETED, CANCELLED, etc.)
+            notes: Optional notes to add/update
+        """
+        import time
+        updated_at = int(time.time() * 1000)  # Current time in milliseconds
+        
+        with self._engine.connect() as conn:
+            # Update record_status
+            conn.execute(
+                text("""
+                    UPDATE orders SET record_status = :record_status, updated_at = :updated_at
+                    WHERE id = :order_id
+                """),
+                {
+                    "order_id": ledger_order_id,
+                    "record_status": record_status.upper(),
+                    "updated_at": updated_at,
+                },
+            )
+            
+            # Update notes if provided
+            if notes is not None:
+                conn.execute(
+                    text("UPDATE orders SET notes = :notes WHERE id = :order_id"),
+                    {
+                        "order_id": ledger_order_id,
+                        "notes": notes,
+                    },
+                )
+            conn.commit()
+    
+    def update_trade_record_status(
+        self,
+        ledger_trade_id: int,
+        record_status: str,
+        notes: Optional[str] = None,
+    ) -> None:
+        """Update trade record_status (e.g., VALID, INVALID, DELETED, CANCELLED).
+        
+        Args:
+            ledger_trade_id: Internal ledger trade ID
+            record_status: New record status (VALID, INVALID, DELETED, CANCELLED, etc.)
+            notes: Optional notes to add/update
+        """
+        with self._engine.connect() as conn:
+            # Update record_status
+            conn.execute(
+                text("""
+                    UPDATE trades SET record_status = :record_status
+                    WHERE id = :trade_id
+                """),
+                {
+                    "trade_id": ledger_trade_id,
+                    "record_status": record_status.upper(),
+                },
+            )
+            
+            # Update notes if provided
+            if notes is not None:
+                conn.execute(
+                    text("UPDATE trades SET notes = :notes WHERE id = :trade_id"),
+                    {
+                        "trade_id": ledger_trade_id,
+                        "notes": notes,
+                    },
+                )
+            conn.commit()
+    
+    def update_adjustment_record_status(
+        self,
+        ledger_adjustment_id: int,
+        record_status: str,
+        notes: Optional[str] = None,
+    ) -> None:
+        """Update adjustment record_status (e.g., VALID, INVALID, DELETED, CANCELLED).
+        
+        Args:
+            ledger_adjustment_id: Internal ledger adjustment ID
+            record_status: New record status (VALID, INVALID, DELETED, CANCELLED, etc.)
+            notes: Optional notes to add/update
+        """
+        with self._engine.connect() as conn:
+            # Update record_status
+            conn.execute(
+                text("""
+                    UPDATE adjustments SET record_status = :record_status
+                    WHERE id = :adjustment_id
+                """),
+                {
+                    "adjustment_id": ledger_adjustment_id,
+                    "record_status": record_status.upper(),
+                },
+            )
+            
+            # Update notes if provided
+            if notes is not None:
+                conn.execute(
+                    text("UPDATE adjustments SET notes = :notes WHERE id = :adjustment_id"),
+                    {
+                        "adjustment_id": ledger_adjustment_id,
+                        "notes": notes,
+                    },
+                )
+            conn.commit()

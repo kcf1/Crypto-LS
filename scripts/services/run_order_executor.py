@@ -272,12 +272,14 @@ def list_orders() -> Dict[str, Any]:
     try:
         book_id = request.args.get("book_id")
         symbol = request.args.get("symbol")
+        record_status = request.args.get("record_status")  # Optional: VALID, INVALID, DELETED, etc.
         limit = request.args.get("limit", type=int, default=100)
         
         orders = ledger.get_orders(
             venue=settings.venue,
             book_id=book_id,
             symbol=symbol,
+            record_status=record_status,  # Defaults to VALID if None
             limit=limit,
         )
         
@@ -295,7 +297,9 @@ def list_orders() -> Dict[str, Any]:
 def get_order(order_id: int) -> Dict[str, Any]:
     """Get order by ledger ID."""
     try:
-        orders = ledger.get_orders(venue=settings.venue, limit=1000)
+        # Allow querying by record_status if needed (defaults to VALID)
+        record_status = request.args.get("record_status")
+        orders = ledger.get_orders(venue=settings.venue, record_status=record_status, limit=1000)
         order = next((o for o in orders if o["id"] == order_id), None)
         
         if not order:
@@ -315,8 +319,8 @@ def cancel_order(order_id: int) -> Dict[str, Any]:
         data = request.json or {}
         book_id = data.get("book_id", "default")
         
-        # Get order to find symbol and exchange_order_id
-        orders = ledger.get_orders(venue=settings.venue, book_id=book_id, limit=1000)
+        # Get order to find symbol and exchange_order_id (only VALID orders)
+        orders = ledger.get_orders(venue=settings.venue, book_id=book_id, record_status="VALID", limit=1000)
         order = next((o for o in orders if o["id"] == order_id), None)
         
         if not order:
@@ -391,12 +395,14 @@ def list_trades() -> Dict[str, Any]:
     try:
         book_id = request.args.get("book_id")
         symbol = request.args.get("symbol")
+        record_status = request.args.get("record_status")  # Optional: VALID, INVALID, DELETED, etc.
         limit = request.args.get("limit", type=int, default=100)
         
         trades = ledger.get_trades(
             venue=settings.venue,
             book_id=book_id,
             symbol=symbol,
+            record_status=record_status,  # Defaults to VALID if None
             limit=limit,
         )
         

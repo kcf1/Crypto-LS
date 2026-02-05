@@ -49,7 +49,7 @@ def rebuild_balances(ledger: Ledger, book_id: Optional[str] = None) -> None:
                 text("""
                     SELECT venue, book_id, symbol, side, quantity, price, commission, traded_at
                     FROM trades
-                    WHERE book_id = :book_id
+                    WHERE book_id = :book_id AND record_status = 'VALID'
                     ORDER BY traded_at ASC
                 """),
                 {"book_id": book_id},
@@ -59,6 +59,7 @@ def rebuild_balances(ledger: Ledger, book_id: Optional[str] = None) -> None:
                 text("""
                     SELECT venue, book_id, symbol, side, quantity, price, commission, traded_at
                     FROM trades
+                    WHERE record_status = 'VALID'
                     ORDER BY traded_at ASC
                 """),
             )
