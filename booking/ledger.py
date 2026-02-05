@@ -70,6 +70,17 @@ CREATE TABLE IF NOT EXISTS adjustments (
     created_by TEXT,
     notes TEXT
 );
+CREATE TABLE IF NOT EXISTS books (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    venue TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER,
+    created_by TEXT,
+    notes TEXT
+);
 """
 
 
@@ -953,3 +964,217 @@ class Ledger:
             }
             for r in rows
         ]
+
+    # ============================================================================
+    # Book Management Methods
+    # ============================================================================
+
+    def create_book(
+        self,
+        book_id: str,
+        name: str,
+        venue: str,
+        description: Optional[str] = None,
+        created_by: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> str:
+        """Create a new book. Returns book_id.
+        
+        Args:
+            book_id: Unique book identifier (lowercase, alphanumeric + underscores)
+            name: Display name for the book
+            venue: Venue this book belongs to
+            description: Optional description
+            created_by: Creator identifier
+            notes: Optional notes
+            
+        Returns:
+            book_id
+            
+        Raises:
+            ValueError: If book_id format is invalid or already exists
+        """
+        import re
+        import time
+        
+        # Validate book_id format
+        if not re.match(r"^[a-z0-9_]+$", book_id):
+            raise ValueError(f"book_id must match pattern ^[a-z0-9_]+$ (got: {book_id})")
+        
+        if not name or not name.strip():
+            raise ValueError("name is required")
+        
+        created_at = int(time.time() * 1000)
+        
+        with self._engine.connect() as conn:
+            # Check if book already exists
+            existing = conn.execute(
+                text("SELECT id FROM books WHERE id = :book_id"),
+                {"book_id": book_id}
+            ).fetchone()
+            
+            if existing:
+                raise ValueError(f"Book with id '{book_id}' already exists")
+            
+            # Insert book
+            try:
+                is_active_val = 1 if not _is_postgres(str(self._engine.url)) else True
+                conn.execute(
+                    text("""
+                        INSERT INTO books (id, name, description, venue, is_active, created_at, created_by, notes)
+                        VALUES (:id, :name, :description, :venue, :is_active, :created_at, :created_by, :notes)
+                    """),
+                    {
+                        "id": book_id,
+                        "name": name,
+                        "description": description,
+                        "venue": venue,
+                        "is_active": is_active_val,
+                        "created_at": created_at,
+                        "created_by": created_by,
+                        "notes": notes,
+                    }
+                )
+                conn.commit()
+                return book_id
+            except IntegrityError:
+                conn.rollback()
+                raise ValueError(f"Book with id '{book_id}' already exists")
+
+    def get_books(
+        self,
+        venue: Optional[str] = None,
+        active_only: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Get list of books.
+        
+        Args:
+            venue: Filter by venue (optional)
+            active_only: Only return active books (default: True)
+            
+        Returns:
+            List of book dictionaries
+        """
+        sql = "SELECT id, name, description, venue, is_active, created_at, updated_at, created_by, notes FROM books WHERE 1=1"
+        params: dict = {}
+        
+        if venue:
+            sql += " AND venue = :venue"
+            params["venue"] = venue
+        
+        if active_only:
+            if _is_postgres(str(self._engine.url)):
+                sql += " AND is_active = true"
+            else:
+                sql += " AND is_active = 1"
+        
+        sql += " ORDER BY created_at DESC"
+        
+        with self._engine.connect() as conn:
+            result = conn.execute(text(sql), params)
+            rows = result.fetchall()
+        
+        return [
+            {
+                "id": r[0],
+                "name": r[1],
+                "description": r[2],
+                "venue": r[3],
+                "is_active": bool(r[4]) if _is_postgres(str(self._engine.url)) else (r[4] == 1),
+                "created_at": r[5],
+                "updated_at": r[6],
+                "created_by": r[7],
+                "notes": r[8],
+            }
+            for r in rows
+        ]
+
+    def get_book(self, book_id: str) -> Optional[Dict[str, Any]]:
+        """Get a book by ID.
+        
+        Args:
+            book_id: Book identifier
+            
+        Returns:
+            Book dictionary or None if not found
+        """
+        books = self.get_books(active_only=False)
+        return next((b for b in books if b["id"] == book_id), None)
+
+    def update_book(
+        self,
+        book_id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        is_active: Optional[bool] = None,
+        notes: Optional[str] = None,
+    ) -> bool:
+        """Update a book.
+        
+        Args:
+            book_id: Book identifier
+            name: New name (optional)
+            description: New description (optional)
+            is_active: New active status (optional)
+            notes: New notes (optional)
+            
+        Returns:
+            True if updated, False if book not found
+        """
+        import time
+        
+        updates = []
+        params: dict = {"book_id": book_id}
+        
+        if name is not None:
+            if not name.strip():
+                raise ValueError("name cannot be empty")
+            updates.append("name = :name")
+            params["name"] = name
+        
+        if description is not None:
+            updates.append("description = :description")
+            params["description"] = description
+        
+        if is_active is not None:
+            updates.append("is_active = :is_active")
+            params["is_active"] = 1 if not _is_postgres(str(self._engine.url)) else is_active
+        
+        if notes is not None:
+            updates.append("notes = :notes")
+            params["notes"] = notes
+        
+        if not updates:
+            return False  # No updates provided
+        
+        updates.append("updated_at = :updated_at")
+        params["updated_at"] = int(time.time() * 1000)
+        
+        sql = f"UPDATE books SET {', '.join(updates)} WHERE id = :book_id"
+        
+        with self._engine.connect() as conn:
+            result = conn.execute(text(sql), params)
+            conn.commit()
+            return result.rowcount > 0
+
+    def validate_book_id(self, book_id: str, venue: Optional[str] = None) -> bool:
+        """Validate that a book_id exists and is active.
+        
+        Args:
+            book_id: Book identifier to validate
+            venue: Optional venue to check (if provided, book must match venue)
+            
+        Returns:
+            True if book exists and is active, False otherwise
+        """
+        book = self.get_book(book_id)
+        if not book:
+            return False
+        
+        if not book["is_active"]:
+            return False
+        
+        if venue and book["venue"] != venue:
+            return False
+        
+        return True

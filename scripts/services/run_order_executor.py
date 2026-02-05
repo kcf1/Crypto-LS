@@ -243,6 +243,14 @@ def place_order() -> Dict[str, Any]:
         if "symbol" not in data or "side" not in data:
             return jsonify({"error": "symbol and side are required"}), 400
         
+        # Validate book_id if provided
+        book_id = data.get("book_id", "default")
+        if not ledger.validate_book_id(book_id, venue=settings.venue):
+            return jsonify({
+                "error": f"Invalid or inactive book_id: {book_id}",
+                "type": "ValueError"
+            }), 400
+        
         # Process order
         result = process_order(data)
         return jsonify(result), 201
@@ -591,6 +599,141 @@ def run_reconciliation() -> Dict[str, Any]:
     
     except Exception as e:
         logger.error(f"Error running reconciliation: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+# ============================================================================
+# Book Management Endpoints
+# ============================================================================
+
+@app.route("/books", methods=["GET"])
+def list_books() -> Dict[str, Any]:
+    """List books with optional filters."""
+    try:
+        venue = request.args.get("venue")
+        active_only = request.args.get("active_only", "true").lower() in ("true", "1", "yes")
+        
+        books = ledger.get_books(venue=venue, active_only=active_only)
+        
+        return jsonify({
+            "books": books,
+            "count": len(books),
+        }), 200
+    
+    except Exception as e:
+        logger.error(f"Error listing books: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/books/<book_id>", methods=["GET"])
+def get_book(book_id: str) -> Dict[str, Any]:
+    """Get book by ID."""
+    try:
+        book = ledger.get_book(book_id)
+        
+        if not book:
+            return jsonify({"error": "Book not found"}), 404
+        
+        return jsonify(book), 200
+    
+    except Exception as e:
+        logger.error(f"Error getting book: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/books", methods=["POST"])
+def create_book() -> Dict[str, Any]:
+    """Create a new book."""
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+        
+        # Validate required fields
+        if "id" not in data or "name" not in data:
+            return jsonify({"error": "id and name are required"}), 400
+        
+        # Get venue from data or use default
+        venue = data.get("venue") or settings.venue
+        
+        # Create book
+        book_id = ledger.create_book(
+            book_id=data["id"],
+            name=data["name"],
+            venue=venue,
+            description=data.get("description"),
+            created_by=data.get("created_by"),
+            notes=data.get("notes"),
+        )
+        
+        # Return created book
+        book = ledger.get_book(book_id)
+        return jsonify(book), 201
+    
+    except ValueError as e:
+        logger.error(f"Validation error: {e}")
+        return jsonify({"error": str(e), "type": "ValueError"}), 400
+    except Exception as e:
+        logger.error(f"Error creating book: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/books/<book_id>", methods=["PUT"])
+def update_book(book_id: str) -> Dict[str, Any]:
+    """Update a book."""
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+        
+        # Update book
+        updated = ledger.update_book(
+            book_id=book_id,
+            name=data.get("name"),
+            description=data.get("description"),
+            is_active=data.get("is_active"),
+            notes=data.get("notes"),
+        )
+        
+        if not updated:
+            return jsonify({"error": "Book not found"}), 404
+        
+        # Return updated book
+        book = ledger.get_book(book_id)
+        return jsonify(book), 200
+    
+    except ValueError as e:
+        logger.error(f"Validation error: {e}")
+        return jsonify({"error": str(e), "type": "ValueError"}), 400
+    except Exception as e:
+        logger.error(f"Error updating book: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/books/<book_id>", methods=["DELETE"])
+def delete_book(book_id: str) -> Dict[str, Any]:
+    """Deactivate a book (soft delete)."""
+    try:
+        # Check if book exists
+        book = ledger.get_book(book_id)
+        if not book:
+            return jsonify({"error": "Book not found"}), 404
+        
+        # Deactivate book (set is_active=false)
+        updated = ledger.update_book(book_id=book_id, is_active=False)
+        
+        if not updated:
+            return jsonify({"error": "Failed to deactivate book"}), 500
+        
+        # Return deactivated book
+        book = ledger.get_book(book_id)
+        return jsonify({
+            **book,
+            "message": "Book deactivated successfully",
+        }), 200
+    
+    except Exception as e:
+        logger.error(f"Error deactivating book: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 

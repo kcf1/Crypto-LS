@@ -15,6 +15,15 @@ if str(_root) not in sys.path:
 import requests
 import streamlit as st
 from datetime import datetime
+import sys
+from pathlib import Path
+
+# Add project root to path for config access
+_root = Path(__file__).resolve().parent.parent.parent
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+
+from config import settings
 
 # Order Executor API Configuration
 ORDER_EXECUTOR_URL = "http://localhost:8000"
@@ -103,6 +112,60 @@ def get_balances(asset: Optional[str] = None, book_id: Optional[str] = None) -> 
         return {"success": False, "error": str(e)}
 
 
+def get_books(venue: Optional[str] = None, active_only: bool = True) -> Dict:
+    """Get books from API."""
+    try:
+        params = {"active_only": "true" if active_only else "false"}
+        if venue:
+            params["venue"] = venue
+        response = requests.get(f"{ORDER_EXECUTOR_URL}/books", params=params, timeout=5)
+        response.raise_for_status()
+        return {"success": True, "data": response.json()}
+    except requests.exceptions.RequestException as e:
+        return {"success": False, "error": str(e)}
+
+
+def create_book(book_data: Dict) -> Dict:
+    """Create a new book."""
+    try:
+        response = requests.post(
+            f"{ORDER_EXECUTOR_URL}/books",
+            json=book_data,
+            timeout=5
+        )
+        response.raise_for_status()
+        return {"success": True, "data": response.json()}
+    except requests.exceptions.RequestException as e:
+        return {"success": False, "error": str(e)}
+
+
+def update_book(book_id: str, book_data: Dict) -> Dict:
+    """Update a book."""
+    try:
+        response = requests.put(
+            f"{ORDER_EXECUTOR_URL}/books/{book_id}",
+            json=book_data,
+            timeout=5
+        )
+        response.raise_for_status()
+        return {"success": True, "data": response.json()}
+    except requests.exceptions.RequestException as e:
+        return {"success": False, "error": str(e)}
+
+
+def delete_book(book_id: str) -> Dict:
+    """Deactivate a book."""
+    try:
+        response = requests.delete(
+            f"{ORDER_EXECUTOR_URL}/books/{book_id}",
+            timeout=5
+        )
+        response.raise_for_status()
+        return {"success": True, "data": response.json()}
+    except requests.exceptions.RequestException as e:
+        return {"success": False, "error": str(e)}
+
+
 def cancel_order(order_id: int) -> Dict:
     """Cancel an order."""
     try:
@@ -158,13 +221,14 @@ if not check_service_health():
 st.success("✅ Order Executor Service is running")
 
 # Tabs for different functions
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "Place Order",
     "Orders",
     "Trades",
     "Positions",
     "Balances",
-    "Admin"
+    "Admin",
+    "Book Management"
 ])
 
 # Tab 1: Place Order
@@ -182,7 +246,18 @@ with tab1:
         with col2:
             quantity = st.number_input("Quantity", min_value=0.0, value=0.001, step=0.001, format="%.6f", help="Base asset quantity")
             price = st.number_input("Price", min_value=0.0, value=0.0, step=0.01, format="%.2f", help="Required for LIMIT orders")
-            book_id = st.text_input("Book ID", value="default", help="Book identifier for grouping orders")
+            # Book selection dropdown
+            book_options = load_books_for_dropdown()
+            if book_options:
+                selected_book_display = st.selectbox(
+                    "Book",
+                    options=[opt[0] for opt in book_options],
+                    index=0 if book_options else None,
+                    help="Select book for this order"
+                )
+                book_id = next((opt[1] for opt in book_options if opt[0] == selected_book_display), "default")
+            else:
+                book_id = st.text_input("Book ID", value="default", help="Book identifier (fallback if no books loaded)")
         
         notes = st.text_input("Notes (optional)", value="", help="Additional notes for this order")
         
@@ -228,7 +303,16 @@ with tab2:
     with col1:
         filter_symbol = st.text_input("Filter by Symbol (optional)", value="", placeholder="e.g., BTCUSDT")
     with col2:
-        filter_book_id = st.text_input("Filter by Book ID (optional)", value="", placeholder="e.g., default")
+        # Book filter dropdown
+        book_options = load_books_for_dropdown()
+        book_options_with_all = [("All Books", "")] + book_options
+        selected_book_filter = st.selectbox(
+            "Filter by Book",
+            options=[opt[0] for opt in book_options_with_all],
+            index=0,
+            key="orders_book_filter"
+        )
+        filter_book_id = next((opt[1] for opt in book_options_with_all if opt[0] == selected_book_filter), None)
     with col3:
         limit = st.number_input("Limit", min_value=1, max_value=500, value=50)
     
@@ -287,7 +371,16 @@ with tab3:
     with col1:
         filter_symbol = st.text_input("Filter by Symbol (optional)", value="", key="trade_symbol", placeholder="e.g., BTCUSDT")
     with col2:
-        filter_book_id = st.text_input("Filter by Book ID (optional)", value="", key="trade_book_id", placeholder="e.g., default")
+        # Book filter dropdown
+        book_options = load_books_for_dropdown()
+        book_options_with_all = [("All Books", "")] + book_options
+        selected_book_filter = st.selectbox(
+            "Filter by Book",
+            options=[opt[0] for opt in book_options_with_all],
+            index=0,
+            key="trades_book_filter"
+        )
+        filter_book_id = next((opt[1] for opt in book_options_with_all if opt[0] == selected_book_filter), None)
     with col3:
         limit = st.number_input("Limit", min_value=1, max_value=500, value=50, key="trade_limit")
     
@@ -333,7 +426,16 @@ with tab4:
     with col1:
         filter_symbol = st.text_input("Filter by Symbol (optional)", value="", key="pos_symbol", placeholder="e.g., BTCUSDT")
     with col2:
-        filter_book_id = st.text_input("Filter by Book ID (optional)", value="", key="pos_book_id", placeholder="e.g., default")
+        # Book filter dropdown
+        book_options = load_books_for_dropdown()
+        book_options_with_all = [("All Books", "")] + book_options
+        selected_book_filter = st.selectbox(
+            "Filter by Book",
+            options=[opt[0] for opt in book_options_with_all],
+            index=0,
+            key="positions_book_filter"
+        )
+        filter_book_id = next((opt[1] for opt in book_options_with_all if opt[0] == selected_book_filter), None)
     
     if st.button("Refresh Positions", type="primary", key="refresh_positions"):
         with st.spinner("Loading positions..."):
@@ -372,7 +474,16 @@ with tab5:
     with col1:
         filter_asset = st.text_input("Filter by Asset (optional)", value="", key="balance_asset", placeholder="e.g., USDT")
     with col2:
-        filter_book_id = st.text_input("Filter by Book ID (optional)", value="", key="balance_book_id", placeholder="e.g., default")
+        # Book filter dropdown
+        book_options = load_books_for_dropdown()
+        book_options_with_all = [("All Books", "")] + book_options
+        selected_book_filter = st.selectbox(
+            "Filter by Book",
+            options=[opt[0] for opt in book_options_with_all],
+            index=0,
+            key="balances_book_filter"
+        )
+        filter_book_id = next((opt[1] for opt in book_options_with_all if opt[0] == selected_book_filter), None)
     
     if st.button("Refresh Balances", type="primary", key="refresh_balances"):
         with st.spinner("Loading balances..."):
@@ -440,3 +551,120 @@ with tab6:
                 st.json(result["data"])
             else:
                 st.error(f"❌ Failed: {result.get('error', 'Unknown error')}")
+
+# Tab 7: Book Management
+with tab7:
+    st.header("📚 Book Management")
+    st.caption("Create, edit, and manage trading books")
+    
+    # Load books for display
+    if st.button("Refresh Books", type="primary", key="refresh_books"):
+        st.rerun()
+    
+    # Get books
+    result = get_books(venue=settings.venue, active_only=False)
+    
+    if result["success"]:
+        books = result["data"].get("books", [])
+        st.success(f"✅ Found {len(books)} books")
+        
+        # Create Book Form
+        with st.expander("➕ Create New Book", expanded=False):
+            with st.form("create_book_form"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    new_book_id = st.text_input("Book ID *", value="", help="Lowercase, alphanumeric + underscores (e.g., test_book)")
+                    new_book_name = st.text_input("Book Name *", value="", help="Display name (e.g., Test Book)")
+                    new_venue = st.selectbox("Venue", options=[settings.venue], index=0)
+                with col2:
+                    new_description = st.text_area("Description", value="", help="Optional description")
+                    new_notes = st.text_area("Notes", value="", help="Optional notes")
+                
+                create_submitted = st.form_submit_button("Create Book", type="primary")
+                
+                if create_submitted:
+                    if not new_book_id or not new_book_name:
+                        st.error("Book ID and Name are required")
+                    else:
+                        book_data = {
+                            "id": new_book_id.lower().strip(),
+                            "name": new_book_name.strip(),
+                            "venue": new_venue,
+                            "description": new_description.strip() if new_description else None,
+                            "notes": new_notes.strip() if new_notes else None,
+                        }
+                        
+                        with st.spinner("Creating book..."):
+                            create_result = create_book(book_data)
+                        
+                        if create_result["success"]:
+                            st.success("✅ Book created successfully!")
+                            st.json(create_result["data"])
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Failed to create book: {create_result.get('error', 'Unknown error')}")
+        
+        # Books List
+        if books:
+            st.subheader("Books List")
+            for book in books:
+                status_color = "🟢" if book.get("is_active") else "🔴"
+                status_text = "Active" if book.get("is_active") else "Inactive"
+                
+                with st.expander(f"{status_color} {book.get('name')} ({book.get('id')}) - {status_text}"):
+                    col1, col2 = st.columns([2, 1])
+                    
+                    with col1:
+                        st.write(f"**ID:** {book.get('id')}")
+                        st.write(f"**Name:** {book.get('name')}")
+                        st.write(f"**Venue:** {book.get('venue')}")
+                        if book.get('description'):
+                            st.write(f"**Description:** {book.get('description')}")
+                        if book.get('notes'):
+                            st.write(f"**Notes:** {book.get('notes')}")
+                        if book.get('created_at'):
+                            created = datetime.fromtimestamp(book['created_at'] / 1000)
+                            st.caption(f"Created: {created.strftime('%Y-%m-%d %H:%M:%S')}")
+                        if book.get('created_by'):
+                            st.caption(f"Created by: {book.get('created_by')}")
+                    
+                    with col2:
+                        # Edit form
+                        with st.form(f"edit_book_{book.get('id')}"):
+                            edit_name = st.text_input("Name", value=book.get('name', ''), key=f"edit_name_{book.get('id')}")
+                            edit_description = st.text_area("Description", value=book.get('description') or '', key=f"edit_desc_{book.get('id')}")
+                            edit_is_active = st.checkbox("Active", value=book.get('is_active', True), key=f"edit_active_{book.get('id')}")
+                            edit_notes = st.text_area("Notes", value=book.get('notes') or '', key=f"edit_notes_{book.get('id')}")
+                            
+                            col_edit1, col_edit2 = st.columns(2)
+                            with col_edit1:
+                                if st.form_submit_button("💾 Update", use_container_width=True):
+                                    update_data = {
+                                        "name": edit_name.strip(),
+                                        "description": edit_description.strip() if edit_description else None,
+                                        "is_active": edit_is_active,
+                                        "notes": edit_notes.strip() if edit_notes else None,
+                                    }
+                                    
+                                    with st.spinner("Updating book..."):
+                                        update_result = update_book(book.get('id'), update_data)
+                                    
+                                    if update_result["success"]:
+                                        st.success("✅ Book updated!")
+                                        st.rerun()
+                                    else:
+                                        st.error(f"❌ Failed: {update_result.get('error')}")
+                            
+                            with col_edit2:
+                                if st.form_submit_button("🗑️ Deactivate" if book.get('is_active') else "✅ Activate", use_container_width=True):
+                                    # Toggle active status
+                                    toggle_result = update_book(book.get('id'), {"is_active": not book.get('is_active')})
+                                    if toggle_result["success"]:
+                                        st.success("✅ Book status updated!")
+                                        st.rerun()
+                                    else:
+                                        st.error(f"❌ Failed: {toggle_result.get('error')}")
+        else:
+            st.info("No books found. Create your first book using the form above.")
+    else:
+        st.error(f"❌ Failed to load books: {result.get('error', 'Unknown error')}")
