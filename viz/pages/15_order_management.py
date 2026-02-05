@@ -391,9 +391,13 @@ with tab2:
                 orders_data = []
                 for order in orders:
                     created_str = ""
-                    if order.get('created_at'):
-                        created = datetime.fromtimestamp(order['created_at'] / 1000)
+                    created_at = order.get('created_at')
+                    # Handle both None and 0 values (0 means timestamp not provided)
+                    if created_at and created_at > 0:
+                        created = datetime.fromtimestamp(created_at / 1000)
                         created_str = created.strftime('%Y-%m-%d %H:%M:%S')
+                    elif created_at == 0:
+                        created_str = "N/A (timestamp not available)"
                     
                     orders_data.append({
                         "ID": order.get('id'),

@@ -134,6 +134,20 @@ echo "Symbols: [symbols]" >> troubleshooting_log.txt
 - **Check**: Verify `.env` configuration matches expected environment
 - **Action**: This is expected behavior based on configuration
 
+**MARKET Order Price:**
+- **Expected**: MARKET orders show `Price: N/A` in the GUI
+- **Expected**: MARKET orders don't have a fixed price - they execute at market price
+- **Expected**: The actual execution price is recorded in trades, not in the order record
+- **Expected**: Binance API may not return `price` field for MARKET orders
+- **Check**: Verify order type is MARKET - if so, N/A is correct
+- **Action**: This is expected behavior - check trades for actual execution prices
+
+**Order Created Timestamp:**
+- **Expected**: Orders should have a `created_at` timestamp
+- **Issue**: If Binance doesn't return `time` field, timestamp may be missing or 0
+- **Check**: Verify if `created_at` is 0 or missing in database
+- **Action**: This is a bug - should use current time as fallback if Binance doesn't provide timestamp
+
 #### Actual Issues (Require Investigation)
 
 **Persistent Missing Data:**

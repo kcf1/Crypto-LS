@@ -1,6 +1,7 @@
 """Booking orchestrator: integrates order execution with booking ledger."""
 
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 from binance.exceptions import BinanceAPIException
@@ -100,9 +101,11 @@ class BookingOrchestrator:
             # Extract fields from Binance response
             exchange_order_id = str(response.get("orderId", ""))
             status = response.get("status", "").upper()
-            created_at = response.get("time", 0)
+            # Use Binance time if available, otherwise use current time as fallback
+            created_at = response.get("time") or int(time.time() * 1000)
             updated_at = response.get("updateTime")
             executed_qty = float(response.get("executedQty", "0"))
+            # MARKET orders may not have price in order response (price is in trades)
             order_price = response.get("price")
             if order_price:
                 order_price = float(order_price)
