@@ -45,6 +45,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Venue for ledger lookups/records in fix script (default binance_spot)
+FIX_VENUE = settings.venue
+# Book for missing trades when order cannot be resolved (Rec 2); single book (create via POST /books if missing)
+UNALLOCATED_BOOK_ID = "unallocated"
+
 
 def fix_rec1_orders_vs_trades(
     ledger: Ledger,
@@ -168,7 +173,7 @@ def fix_rec2_trades_vs_binance(
                 try:
                     # Create adjustment record for audit
                     ledger.record_adjustment(
-                        venue=settings.venue,
+                        venue=FIX_VENUE,
                         book_id=trade.get("book_id") or book_id or "unknown",
                         type="trade_invalidation",
                         asset_or_symbol=trade["symbol"],
@@ -227,46 +232,60 @@ def fix_rec2_trades_vs_binance(
             # Get all VALID orders for this symbol to find which book they belong to
             orders = ledger.get_orders(symbol=symbol, book_id=book_id, record_status="VALID")
             
+            # Default book for missing trades when order cannot be resolved (e.g. no orderId or no matching order)
+            # Use unallocated book per SOP so these trades are stored in a dedicated book
+            default_book_id = (book_id if book_id and book_id != "all" else None) or UNALLOCATED_BOOK_ID
+
             # For each missing trade, try to find matching order
             for trade in trades:
                 exchange_trade_id = trade["exchange_trade_id"]
                 order_id_from_exchange = trade.get("orderId")  # May not be in trade data
-                
+                order = None
+                trade_book_id = default_book_id
+
                 # Try to find order by exchange_order_id if we have it
                 if order_id_from_exchange:
                     order = ledger.get_order_by_exchange_id(
-                        venue=settings.venue,
+                        venue=FIX_VENUE,
                         exchange_order_id=str(order_id_from_exchange),
                         book_id=book_id,
                     )
                     if order:
-                        # Use order's book_id
                         trade_book_id = order["book_id"]
                     else:
-                        # No matching order - skip (would need manual booking)
-                        logger.warning(
-                            f"Missing trade {exchange_trade_id} has no matching order, "
-                            f"skipping (use manual booking if needed)"
+                        # No matching order - use default book so we still book the trade
+                        logger.info(
+                            f"Missing trade {exchange_trade_id} has no matching order in ledger, "
+                            f"booking with default book_id={default_book_id} (order_id=None)"
                         )
-                        skipped += 1
-                        continue
                 else:
-                    # No order_id in trade - try to match by symbol and time
-                    # This is a fallback - ideally all trades should have order_id
+                    # No orderId in trade - use default book so we still book the trade
+                    logger.info(
+                        f"Missing trade {exchange_trade_id} has no orderId from exchange, "
+                        f"booking with default book_id={default_book_id} (order_id=None)"
+                    )
+
+                # Book the trade (order_id may be None when using default book)
+                side_raw = trade.get("side") or ""
+                side = (side_raw if isinstance(side_raw, str) else str(side_raw)).strip().upper()
+                if not side or side not in ("BUY", "SELL"):
+                    # Binance may return isBuyer instead of side
+                    if trade.get("isBuyer") is True:
+                        side = "BUY"
+                    elif trade.get("isBuyer") is False:
+                        side = "SELL"
+                if not side or side not in ("BUY", "SELL"):
                     logger.warning(
-                        f"Missing trade {exchange_trade_id} has no order_id, "
-                        f"cannot determine book_id automatically"
+                        f"Missing trade {exchange_trade_id} has no valid side (got side={side_raw!r}, isBuyer={trade.get('isBuyer')}), skipping"
                     )
                     skipped += 1
                     continue
-                
-                # Book the trade manually
                 try:
                     trade_id = ledger.record_trade(
-                        venue=settings.venue,
+                        venue=FIX_VENUE,
                         book_id=trade_book_id,
                         symbol=symbol,
-                        side=trade.get("side", "").upper(),
+                        side=side,
                         quantity=float(trade.get("quantity", "0")),
                         price=float(trade.get("price", "0")),
                         traded_at=trade.get("time", 0),

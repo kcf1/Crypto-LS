@@ -868,9 +868,10 @@ class Ledger:
             row = result.fetchone()
             adjustment_id = row[0] if row else 0
             
-            # Update target table based on type
-            if type == "balance":
-                # Update balances.free
+            # Update target table based on type (normalize for comparison)
+            type_lower = (type or "").strip().lower()
+            if type_lower == "balance":
+                # Set balances.free to absolute value
                 is_postgres = _is_postgres(str(self._engine.url))
                 if is_postgres:
                     conn.execute(
@@ -907,7 +908,44 @@ class Ledger:
                             "updated_at": created_at,
                         },
                     )
-            elif type == "position":
+            elif type_lower == "balance_delta":
+                # Add delta to balances.free (for deposit/withdraw: +amount = inject, -amount = withdraw)
+                is_postgres = _is_postgres(str(self._engine.url))
+                if is_postgres:
+                    conn.execute(
+                        text("""
+                            INSERT INTO balances (venue, book_id, asset, free, locked, updated_at)
+                            VALUES (:venue, :book_id, :asset, :delta, 0, :updated_at)
+                            ON CONFLICT (venue, book_id, asset) DO UPDATE SET
+                                free = balances.free + :delta,
+                                updated_at = :updated_at
+                        """),
+                        {
+                            "venue": venue,
+                            "book_id": book_id,
+                            "asset": asset_or_symbol,
+                            "delta": delta_or_value,
+                            "updated_at": created_at,
+                        },
+                    )
+                else:
+                    conn.execute(
+                        text("""
+                            INSERT INTO balances (venue, book_id, asset, free, locked, updated_at)
+                            VALUES (:venue, :book_id, :asset, :delta, 0, :updated_at)
+                            ON CONFLICT (venue, book_id, asset) DO UPDATE SET
+                                free = free + :delta,
+                                updated_at = :updated_at
+                        """),
+                        {
+                            "venue": venue,
+                            "book_id": book_id,
+                            "asset": asset_or_symbol,
+                            "delta": delta_or_value,
+                            "updated_at": created_at,
+                        },
+                    )
+            elif type_lower == "position":
                 # Update positions.quantity
                 conn.execute(
                     text("""
@@ -921,7 +959,7 @@ class Ledger:
                         "updated_at": created_at,
                     },
                 )
-            elif type == "order_status":
+            elif type_lower == "order_status":
                 # Update orders.status
                 order_id = int(asset_or_symbol)
                 conn.execute(
@@ -1316,6 +1354,15 @@ class Ledger:
                         "notes": notes,
                     },
                 )
+            conn.commit()
+    
+    def update_trade_side(self, ledger_trade_id: int, side: str) -> None:
+        """Update trade side (e.g., BUY, SELL). Used to backfill empty side."""
+        with self._engine.connect() as conn:
+            conn.execute(
+                text("UPDATE trades SET side = :side WHERE id = :trade_id"),
+                {"trade_id": ledger_trade_id, "side": side.upper()},
+            )
             conn.commit()
     
     def update_adjustment_record_status(

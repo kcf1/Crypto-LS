@@ -120,7 +120,9 @@ def rec2_trades_vs_binance(ledger: Ledger, binance_client: BinanceClient, book_i
                     missing_trades.append({
                         "symbol": symbol,
                         "exchange_trade_id": trade_id,
+                        "orderId": trade.get("orderId"),
                         "side": trade.get("side"),
+                        "isBuyer": trade.get("isBuyer"),
                         "quantity": trade.get("qty"),
                         "price": trade.get("price"),
                         "time": trade.get("time"),

@@ -77,7 +77,15 @@ def place_order(order_data: Dict) -> Dict:
         response.raise_for_status()
         return {"success": True, "data": response.json()}
     except requests.exceptions.RequestException as e:
-        return {"success": False, "error": str(e)}
+        error_msg = str(e)
+        if hasattr(e, "response") and e.response is not None:
+            try:
+                body = e.response.json()
+                if isinstance(body.get("error"), str):
+                    error_msg = body["error"]
+            except Exception:
+                pass
+        return {"success": False, "error": error_msg}
 
 
 def get_orders(symbol: Optional[str] = None, book_id: Optional[str] = None, record_status: Optional[str] = None, limit: int = 50) -> Dict:
@@ -271,6 +279,28 @@ def rebuild_balances() -> Dict:
         return {"success": False, "error": str(e)}
 
 
+def create_adjustment(adjustment_data: Dict) -> Dict:
+    """Create an adjustment via API (e.g. balance_delta for inject/withdraw)."""
+    try:
+        response = requests.post(
+            f"{ORDER_EXECUTOR_URL}/admin/adjustments",
+            json=adjustment_data,
+            timeout=10
+        )
+        response.raise_for_status()
+        return {"success": True, "data": response.json()}
+    except requests.exceptions.RequestException as e:
+        error_msg = str(e)
+        if hasattr(e, "response") and e.response is not None:
+            try:
+                body = e.response.json()
+                if isinstance(body.get("error"), str):
+                    error_msg = body["error"]
+            except Exception:
+                pass
+        return {"success": False, "error": error_msg}
+
+
 # Page Title
 st.title("📊 Order Management")
 st.caption("Manual order placement and testing interface for order-executor service")
@@ -284,13 +314,14 @@ if not check_service_health():
 st.success("✅ Order Executor Service is running")
 
 # Tabs for different functions
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab_inject, tab7, tab8 = st.tabs([
     "Place Order",
     "Orders",
     "Trades",
     "Adjustments",
     "Positions",
     "Balances",
+    "Inject / Withdraw",
     "Admin",
     "Book Management"
 ])
@@ -548,7 +579,7 @@ with tab3:
                         "Record Status": rec_status_str,
                         "Venue": trade.get('venue', 'N/A'),
                         "Symbol": trade.get('symbol', 'N/A'),
-                        "Side": trade.get('side', 'N/A'),
+                        "Side": (trade.get('side') or "—").strip() or "—",
                         "Quantity": f"{trade.get('quantity', 0):.6f}",
                         "Price": f"{trade.get('price', 0):.2f}",
                         "Total": f"{total_value:.2f}",
@@ -585,7 +616,7 @@ with tab4:
     with col2:
         filter_type = st.selectbox(
             "Type",
-            options=["All", "balance", "position", "order_status", "trade_invalidation"],
+            options=["All", "balance", "balance_delta", "position", "order_status", "trade_invalidation"],
             index=0,
             key="adjustments_type_filter"
         )
@@ -647,7 +678,7 @@ with tab4:
             st.error(f"❌ Failed to load adjustments: {result.get('error', 'Unknown error')}")
 
 # Tab 5: Positions
-with tab4:
+with tab5:
     st.header("Current Positions")
     
     col1, col2 = st.columns(2)
@@ -701,6 +732,7 @@ with tab4:
                 st.dataframe(df_positions, use_container_width=True, hide_index=True)
             else:
                 st.info("No positions found")
+                st.caption("Positions are derived from VALID trades. If you have trades but see no positions, go to **Admin** → **Rebuild Positions**.")
         else:
             st.error(f"❌ Failed to load positions: {result.get('error', 'Unknown error')}")
 
@@ -784,6 +816,59 @@ with tab6:
                 st.info("No balances found")
         else:
             st.error(f"❌ Failed to load balances: {result.get('error', 'Unknown error')}")
+
+# Tab: Inject / Withdraw
+with tab_inject:
+    st.header("Inject / Withdraw")
+    st.caption("Record deposits (inject) or withdrawals to update ledger balances. Uses balance_delta adjustments — not trades.")
+    
+    with st.form("inject_withdraw_form"):
+        book_options = load_books_for_dropdown()
+        if not book_options:
+            book_options = [("Default Book (default)", "default")]
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_book = st.selectbox(
+                "Book",
+                options=[opt[0] for opt in book_options],
+                index=0,
+                key="inject_book"
+            )
+            book_id_inject = next((opt[1] for opt in book_options if opt[0] == selected_book), "default")
+            asset = st.text_input("Asset", value="USDT", key="inject_asset", help="e.g. USDT, BTC")
+            amount = st.number_input("Amount", min_value=0.0, value=0.0, step=0.01, format="%.6f", key="inject_amount")
+        with col2:
+            direction = st.radio("Direction", options=["Inject (deposit)", "Withdraw"], key="inject_direction", horizontal=True)
+            reason = st.text_input("Reason", value="", key="inject_reason", placeholder="e.g. Bank deposit, Withdrawal to bank")
+            notes = st.text_input("Notes (optional)", value="", key="inject_notes")
+        
+        submitted = st.form_submit_button("Submit")
+        
+        if submitted:
+            if not asset or not asset.strip():
+                st.error("Asset is required")
+            elif amount <= 0:
+                st.error("Amount must be greater than 0")
+            else:
+                delta = amount if direction == "Inject (deposit)" else -amount
+                payload = {
+                    "venue": settings.venue,
+                    "book_id": book_id_inject,
+                    "type": "balance_delta",
+                    "asset_or_symbol": asset.strip().upper(),
+                    "delta_or_value": delta,
+                    "reason": reason.strip() or (direction),
+                    "created_by": "gui",
+                    "notes": notes.strip() or None,
+                }
+                with st.spinner("Recording..."):
+                    result = create_adjustment(payload)
+                if result["success"]:
+                    st.success(f"✅ Recorded: {direction} {amount} {asset.strip().upper()} (adjustment_id={result['data'].get('adjustment_id', 'N/A')})")
+                    st.json(result["data"])
+                else:
+                    st.error(f"❌ Failed: {result.get('error', 'Unknown error')}")
 
 # Tab 7: Admin
 with tab7:

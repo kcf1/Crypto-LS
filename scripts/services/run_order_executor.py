@@ -50,8 +50,11 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
+# Venue for orders and ledger (default binance_spot)
+ORDER_VENUE = settings.venue
+
 # Initialize components
-orchestrator = BookingOrchestrator()
+orchestrator = BookingOrchestrator(venue=ORDER_VENUE)
 ledger = Ledger()
 
 # Redis configuration
@@ -245,7 +248,7 @@ def place_order() -> Dict[str, Any]:
         
         # Validate book_id if provided
         book_id = data.get("book_id", "default")
-        if not ledger.validate_book_id(book_id, venue=settings.venue):
+        if not ledger.validate_book_id(book_id, venue=ORDER_VENUE):
             return jsonify({
                 "error": f"Invalid or inactive book_id: {book_id}",
                 "type": "ValueError"
@@ -276,7 +279,7 @@ def list_orders() -> Dict[str, Any]:
         limit = request.args.get("limit", type=int, default=100)
         
         orders = ledger.get_orders(
-            venue=settings.venue,
+            venue=ORDER_VENUE,
             book_id=book_id,
             symbol=symbol,
             record_status=record_status,  # Defaults to VALID if None
@@ -299,7 +302,7 @@ def get_order(order_id: int) -> Dict[str, Any]:
     try:
         # Allow querying by record_status if needed (defaults to VALID)
         record_status = request.args.get("record_status")
-        orders = ledger.get_orders(venue=settings.venue, record_status=record_status, limit=1000)
+        orders = ledger.get_orders(venue=ORDER_VENUE, record_status=record_status, limit=1000)
         order = next((o for o in orders if o["id"] == order_id), None)
         
         if not order:
@@ -320,7 +323,7 @@ def cancel_order(order_id: int) -> Dict[str, Any]:
         book_id = data.get("book_id", "default")
         
         # Get order to find symbol and exchange_order_id (only VALID orders)
-        orders = ledger.get_orders(venue=settings.venue, book_id=book_id, record_status="VALID", limit=1000)
+        orders = ledger.get_orders(venue=ORDER_VENUE, book_id=book_id, record_status="VALID", limit=1000)
         order = next((o for o in orders if o["id"] == order_id), None)
         
         if not order:
@@ -374,7 +377,7 @@ def get_balances() -> Dict[str, Any]:
         asset = request.args.get("asset")
         
         balances = ledger.get_balances(
-            venue=settings.venue,
+            venue=ORDER_VENUE,
             book_id=book_id,
             asset=asset,
         )
@@ -405,7 +408,7 @@ def list_trades() -> Dict[str, Any]:
             record_status_for_ledger = record_status_param.strip() if isinstance(record_status_param, str) else record_status_param
         
         trades = ledger.get_trades(
-            venue=settings.venue,
+            venue=ORDER_VENUE,
             book_id=book_id,
             symbol=symbol,
             record_status=record_status_for_ledger,

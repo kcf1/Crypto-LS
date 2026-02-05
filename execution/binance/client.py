@@ -8,6 +8,12 @@ from binance.exceptions import BinanceAPIException
 from config import secrets, settings
 
 
+def _format_decimal(value: float, max_decimals: int = 20) -> str:
+    """Format number as string without scientific notation (Binance rejects e.g. 1e-05)."""
+    s = f"{value:.{max_decimals}f}".rstrip("0").rstrip(".")
+    return s
+
+
 class BinanceClient:
     """Thin wrapper around python-binance Client with config-driven auth and testnet."""
 
@@ -51,11 +57,11 @@ class BinanceClient:
         """Place order. See Binance API for params (quantity, price, timeInForce, etc.)."""
         params: dict = {"symbol": symbol, "side": side.upper(), "type": order_type.upper()}
         if quantity is not None:
-            params["quantity"] = quantity
+            params["quantity"] = _format_decimal(float(quantity))
         if quote_order_qty is not None:
-            params["quoteOrderQty"] = quote_order_qty
+            params["quoteOrderQty"] = _format_decimal(float(quote_order_qty))
         if price is not None:
-            params["price"] = price
+            params["price"] = _format_decimal(float(price))
         if time_in_force is not None:
             params["timeInForce"] = time_in_force
         params.update(kwargs)

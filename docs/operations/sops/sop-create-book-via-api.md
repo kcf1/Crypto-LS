@@ -108,6 +108,24 @@ Before creating a book, prepare the following details:
 }
 ```
 
+**Unallocated book (reconciliation):**
+
+The **unallocated** book is used to store trades that exist on the exchange but have no matching order in the ledger (e.g. when running the Rec 2 reconciliation fix). Create it via this API (see below) if it does not already exist.
+
+- **`unallocated`** — venue `binance_spot`; single book for all unallocated trades.
+
+Example payload to create via `POST /books`:
+
+```json
+{
+  "id": "unallocated",
+  "name": "Unallocated",
+  "venue": "binance_spot",
+  "description": "Trades from exchange with no matching order in ledger (e.g. Rec 2 reconciliation fix).",
+  "notes": "Used by fix_reconciliation_breaks Rec 2 for missing trades when order_id cannot be resolved."
+}
+```
+
 ---
 
 ### Step 3: Present Book Details for Review

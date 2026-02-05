@@ -261,35 +261,56 @@ class BookingOrchestrator:
         Returns:
             List of ledger trade IDs
         """
+        # Get order side from ledger for fallback when Binance fill omits "side"
+        orders = self._ledger.get_orders(book_id=book_id, limit=1000)
+        order_row = next((o for o in orders if o["id"] == ledger_order_id), None)
+        order_side = (order_row.get("side") or "").strip().upper() if order_row else ""
+
         # Get fills from exchange (filter by orderId)
         fills = self._order_manager.get_fills(symbol=symbol, orderId=int(exchange_order_id))
         # Filter fills by orderId (Binance API may return all trades, filter client-side)
         fills = [f for f in fills if str(f.get("orderId", "")) == exchange_order_id]
-        
+
         ledger_trade_ids = []
         for fill in fills:
-            # Extract fields from Binance trade response
+            # Extract fields from Binance trade response; fall back to order side when fill omits it
             exchange_trade_id = str(fill.get("id", ""))
-            side = fill.get("side", "").upper()
+            side = (fill.get("side") or "").strip().upper()
+            if not side:
+                is_buyer = fill.get("isBuyer")
+                if is_buyer is not None:
+                    side = "BUY" if is_buyer else "SELL"
+                elif order_side:
+                    side = order_side
+            if not side:
+                logger.warning(
+                    f"Skipping fill {exchange_trade_id} for order {exchange_order_id}: "
+                    "could not determine side from fill or order"
+                )
+                continue
+
             quantity = float(fill.get("qty", "0"))
             price = float(fill.get("price", "0"))
             commission = float(fill.get("commission", "0"))
             commission_asset = fill.get("commissionAsset")
             traded_at = fill.get("time", 0)
-            
-            # Idempotency check - check all record_statuses to avoid duplicates
-            # (but we'll only book if it doesn't exist)
-            existing_trades = self._ledger.get_trades(
+
+            # Idempotency: skip if this exchange fill is already booked in ANY book (prevents dup across books)
+            existing_any = self._ledger.get_trades(
                 venue=self._venue,
-                book_id=book_id,
                 exchange_trade_id=exchange_trade_id,
-                record_status=None,  # Check all statuses for idempotency
+                record_status="",  # Any status - prevent duplicate in any book
+                limit=1,
             )
-            if existing_trades:
-                ledger_trade_ids.append(existing_trades[0]["id"])
+            if existing_any:
+                logger.debug(
+                    f"Fill {exchange_trade_id} already booked (trade_id={existing_any[0]['id']}, book_id={existing_any[0].get('book_id')}), skipping"
+                )
+                ledger_trade_ids.append(existing_any[0]["id"])
                 continue
-            
-            # Book trade
+
+            # Book trade (inherit notes from order when present)
+            order_notes = (order_row.get("notes") or "").strip() or None
             trade_id = self._ledger.record_trade(
                 venue=self._venue,
                 book_id=book_id,
@@ -302,6 +323,7 @@ class BookingOrchestrator:
                 order_id=ledger_order_id,
                 commission=commission,
                 commission_asset=commission_asset,
+                notes=order_notes,
             )
             ledger_trade_ids.append(trade_id)
         
@@ -387,7 +409,7 @@ class BookingOrchestrator:
                 if not binance_trades:
                     continue
                 
-                # Get existing VALID trades for this order from ledger
+                # Get existing VALID trades for this order from ledger (for this order's book)
                 existing_trades = self._ledger.get_trades(
                     venue=self._venue,
                     book_id=order_book_id,
@@ -395,15 +417,29 @@ class BookingOrchestrator:
                     record_status="VALID",  # Only sync valid trades
                 )
                 existing_trade_ids = {t["exchange_trade_id"] for t in existing_trades}
-                
+
                 # Process each trade from Binance
                 for trade in binance_trades:
                     exchange_trade_id = str(trade.get("id", ""))
-                    
-                    # Skip if we already have this trade
+
+                    # Skip if we already have this trade for this order
                     if exchange_trade_id in existing_trade_ids:
                         continue
-                    
+
+                    # Skip if this exchange fill is already booked in ANY book (prevents duplicate across books)
+                    existing_any = self._ledger.get_trades(
+                        venue=self._venue,
+                        exchange_trade_id=exchange_trade_id,
+                        record_status="",  # Any status - prevent duplicate in any book
+                        limit=1,
+                    )
+                    if existing_any:
+                        logger.debug(
+                            f"Fill {exchange_trade_id} already booked in book {existing_any[0].get('book_id')} (trade_id={existing_any[0]['id']}), skipping for order {order_id}"
+                        )
+                        ledger_trade_ids.append(existing_any[0]["id"])
+                        continue
+
                     # Extract trade fields
                     # Try multiple ways to get side (Binance API varies by endpoint)
                     side = trade.get("side", "").upper() if trade.get("side") else ""
@@ -422,7 +458,8 @@ class BookingOrchestrator:
                     commission_asset = trade.get("commissionAsset")
                     traded_at = trade.get("time", 0)
                     
-                    # Record the trade (order status will be auto-updated)
+                    # Record the trade (order status auto-updated; notes inherited from order)
+                    order_notes = (order.get("notes") or "").strip() or None
                     trade_id = self._ledger.record_trade(
                         venue=self._venue,
                         book_id=order_book_id,
@@ -435,6 +472,7 @@ class BookingOrchestrator:
                         order_id=order_id,
                         commission=commission,
                         commission_asset=commission_asset,
+                        notes=order_notes,
                     )
                     ledger_trade_ids.append(trade_id)
                     logger.debug(
