@@ -567,7 +567,7 @@ Data collection runs at aligned 5-minute marks:
 
 ## Monitoring
 
-See `docs/operations/monitoring.md` for detailed monitoring procedures.
+See `docs/operations/monitoring/monitoring.md` for detailed monitoring procedures.
 
 ### Key Metrics
 

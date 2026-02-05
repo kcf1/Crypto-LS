@@ -1,6 +1,6 @@
 # Plan: Futures Market Data Collection
 
-This plan follows the [SOP: Adding New Data Table](../operations/sop-add-new-data-table.md) to add four new Binance Futures market data types: **Basis**, **Global Long/Short Ratio (Accounts)**, **Top Trader Long/Short Ratio (Accounts)**, and **Top Trader Long/Short Ratio (Positions)**. (Taker Buy/Sell Volume is Coin-M only, not USDT-M; dropped.)
+This plan follows the [SOP: Adding New Data Table](../../operations/sops/sop-add-new-data-table.md) to add four new Binance Futures market data types: **Basis**, **Global Long/Short Ratio (Accounts)**, **Top Trader Long/Short Ratio (Accounts)**, and **Top Trader Long/Short Ratio (Positions)**. (Taker Buy/Sell Volume is Coin-M only, not USDT-M; dropped.)
 
 **Data retention:** All endpoints expose only the **last 30 days** of data.
 

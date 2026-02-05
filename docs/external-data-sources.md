@@ -259,7 +259,7 @@ If free tiers become limiting:
 
 - [Architecture Overview](ARCHITECTURE.md) - System architecture and data flow
 - [Binance Data Collection](ARCHITECTURE.md#data-flow) - Current Binance data sources
-- [Data Integrity](operations/data-integrity.md) - Data quality checks
+- [Data Integrity](operations/monitoring/data-integrity.md) - Data quality checks
 
 ---
 

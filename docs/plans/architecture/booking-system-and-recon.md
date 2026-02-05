@@ -228,5 +228,5 @@ So: **update from transactions → run recs on a schedule (e.g. daily).** No nee
 ## Related Docs
 
 - [Architecture Overview](../ARCHITECTURE.md) — system architecture; execution/booking marked WIP.
-- [Booking & Reconciliation Operations](../operations/booking-and-recon.md) — ops summary and job schedule.
+- [Booking & Reconciliation Operations](../../operations/operations/booking-and-recon.md) — ops summary and job schedule.
 - [Multi-Factor Long/Short Strategy](multi-factor-long-short-strategy.md) — strategy layer that will consume positions and drive orders.
