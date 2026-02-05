@@ -414,12 +414,14 @@ with tab2:
                 st.dataframe(df_orders, use_container_width=True, hide_index=True)
                 
                 # Cancel buttons for active orders
-                st.subheader("Cancel Orders")
-                cancel_cols = st.columns(min(3, len([o for o in orders if o.get('status') in ['NEW', 'PARTIALLY_FILLED']])))
-                cancel_idx = 0
-                for order in orders:
-                    if order.get('status') in ['NEW', 'PARTIALLY_FILLED']:
-                        with cancel_cols[cancel_idx % len(cancel_cols)]:
+                active_orders = [o for o in orders if o.get('status') in ['NEW', 'PARTIALLY_FILLED']]
+                if active_orders:
+                    st.subheader("Cancel Orders")
+                    num_cols = min(3, len(active_orders))
+                    cancel_cols = st.columns(num_cols)
+                    cancel_idx = 0
+                    for order in active_orders:
+                        with cancel_cols[cancel_idx % num_cols]:
                             if st.button(f"Cancel #{order.get('id')}", key=f"cancel_{order.get('id')}", use_container_width=True):
                                 cancel_result = cancel_order(order['id'])
                                 if cancel_result["success"]:

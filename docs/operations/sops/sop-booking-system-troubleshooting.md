@@ -76,6 +76,128 @@ echo "Symbols: [symbols]" >> troubleshooting_log.txt
 - **API errors**: Endpoints returning errors
 - **Service down**: Services not running
 
+### 1.3 Distinguish Actual Issues from Expected Behavior
+
+**Before proceeding with troubleshooting, verify if the observed behavior is actually an issue or expected system behavior.**
+
+#### Expected Behaviors (NOT Issues)
+
+**Fill Sync Delays:**
+- **Expected**: Fill sync runs every **60 seconds** (configurable)
+- **Expected**: Trades may not appear immediately after order placement
+- **Expected**: There can be a delay of up to 60 seconds before fills are synced
+- **Check**: If trade was placed less than 60 seconds ago, wait and check again
+- **Action**: Only investigate if delay exceeds 2 minutes
+
+**Order Status Updates:**
+- **Expected**: Order status updates from `NEW` → `PARTIALLY_FILLED` → `FILLED` as trades are recorded
+- **Expected**: Status updates happen when fill sync runs (not instant)
+- **Check**: Verify order was placed more than 60 seconds ago before investigating
+- **Action**: Check fill-sync logs to confirm sync cycle completed
+
+**Position/Balance Updates:**
+- **Expected**: Positions and balances update only when trades are recorded
+- **Expected**: Updates happen after fill sync runs (not instant)
+- **Expected**: Positions/balances are derived from trades, not polled from exchange
+- **Check**: Verify trades exist before expecting position/balance updates
+- **Action**: Only investigate if trades exist but positions/balances are wrong
+
+**Fill Sync Scope:**
+- **Expected**: Fill sync only processes **unfilled orders** (`NEW` or `PARTIALLY_FILLED`)
+- **Expected**: Filled orders are skipped by fill sync
+- **Expected**: Fill sync uses order-driven approach (finds orders first, then fetches their trades)
+- **Check**: Verify order status - if already `FILLED`, fill sync won't process it
+- **Action**: This is expected behavior, not an issue
+
+**GUI Cache:**
+- **Expected**: Streamlit GUI caches API responses (TTL: 10-60 seconds depending on endpoint)
+- **Expected**: GUI may show stale data until cache expires
+- **Check**: Refresh GUI or wait for cache TTL to expire
+- **Action**: Clear browser cache or restart Streamlit if needed
+
+**Book Filtering:**
+- **Expected**: Data is filtered by `book_id` - records from other books won't appear
+- **Expected**: If no `book_id` filter, all books' data is shown
+- **Check**: Verify correct `book_id` is being used in filters
+- **Action**: Check if data exists in other books
+
+**Reconciliation Timing:**
+- **Expected**: Reconciliations compare ledger vs exchange - some mismatches are normal
+- **Expected**: Small timing differences (< 60 seconds) are expected due to sync delays
+- **Expected**: Reconciliations should be run periodically (daily), not continuously
+- **Check**: Verify if mismatch is within expected sync window
+- **Action**: Only investigate persistent mismatches (> 2 minutes old)
+
+**Testnet vs Production:**
+- **Expected**: Testnet orders won't appear in production data and vice versa
+- **Expected**: `USE_TESTNET_FOR_ORDERS` setting determines which environment is used
+- **Check**: Verify `.env` configuration matches expected environment
+- **Action**: This is expected behavior based on configuration
+
+#### Actual Issues (Require Investigation)
+
+**Persistent Missing Data:**
+- **Issue**: Trades missing after 2+ minutes from order placement
+- **Issue**: Orders not appearing in database after placement
+- **Issue**: Positions/balances not updating after trades are recorded
+- **Action**: Proceed with troubleshooting steps
+
+**Data Inconsistencies:**
+- **Issue**: Order status says `FILLED` but sum of trades < order quantity
+- **Issue**: Position quantity doesn't match sum of trades
+- **Issue**: Balance doesn't match sum of trades
+- **Action**: Run reconciliation checks (Step 7)
+
+**Service Failures:**
+- **Issue**: Services not running or crashing
+- **Issue**: API endpoints returning 5xx errors
+- **Issue**: Database connection failures
+- **Action**: Check service health (Step 2)
+
+**Sync Failures:**
+- **Issue**: Fill sync service not running
+- **Issue**: Fill sync errors in logs
+- **Issue**: Binance API errors preventing sync
+- **Action**: Check data transmission issues (Step 6)
+
+**Duplicate Records:**
+- **Issue**: Same trade appearing multiple times
+- **Issue**: Same order appearing multiple times
+- **Action**: Check database issues (Step 4)
+
+#### Decision Matrix
+
+**Ask these questions:**
+
+1. **Timing**: How long ago did the event occur?
+   - < 60 seconds → **Wait** (expected delay)
+   - 60-120 seconds → **Monitor** (may be in progress)
+   - > 120 seconds → **Investigate** (likely issue)
+
+2. **Service Status**: Are services running?
+   - Services down → **Issue** (Step 2)
+   - Services up → Continue investigation
+
+3. **Data Existence**: Does data exist in database?
+   - Not in DB → **Issue** (investigate)
+   - In DB but not in GUI → **Cache issue** (Step 3.2)
+   - In DB and GUI → **Not an issue**
+
+4. **Order Status**: What is the order status?
+   - `NEW` or `PARTIALLY_FILLED` → Fill sync should process it
+   - `FILLED` or `CANCELLED` → Fill sync skips it (expected)
+
+5. **Reconciliation**: What do reconciliations show?
+   - All recs pass → **Not an issue**
+   - Some recs fail → **Issue** (Step 7)
+
+**Document your findings:**
+```bash
+echo "Is this an actual issue? [YES/NO]" >> troubleshooting_log.txt
+echo "Reason: [explanation]" >> troubleshooting_log.txt
+echo "Expected behavior: [description]" >> troubleshooting_log.txt
+```
+
 ---
 
 ## Step 2: Check Service Health
