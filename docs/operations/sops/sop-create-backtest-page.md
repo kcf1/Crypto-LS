@@ -307,37 +307,28 @@ pnl_avg = pnl_avg.fillna(0)
 
 ### 5.2 Regression-Based Combination (Optional)
 
+Use the shared `ridge_aggregation()` from `viz.backtest_utils`. It uses different forward-return horizons by data frequency:
+
+- **Hourly data** (intraday): forward return labels **24h, 48h, 96h, 192h** (horizons 24, 48, 96, 192 periods).
+- **Daily (EOD) data**: forward return labels **1d, 5d, 10d, 30d** (horizons 1, 5, 10, 30 periods).
+
+Ridge fits vol-normalized forward returns on positions; trains on first half of data; returns average of the 4 horizon betas.
+
 ```python
-from sklearn.linear_model import RidgeCV
+from viz.backtest_utils import ridge_aggregation
 
-vol_ret = ret.ewm(span=30, adjust=False).std().clip(lower=VOL_FLOOR)
-X = np.column_stack([pos1.values, pos2.values, pos3.values])
-default_beta = np.array([1.0 / 3, 1.0 / 3, 1.0 / 3])
-betas = []
+# is_intraday_hourly=True for hourly bars (e.g. 5m→hourly), False for EOD
+beta_reg, betas, horizon_labels = ridge_aggregation(
+    pos1, pos2, pos3, ret, vol_ewm_span=30, is_intraday_hourly=False
+)
+# betas[0]..betas[3] correspond to horizon_labels[0]..horizon_labels[3] (e.g. "1d","5d","10d","30d" or "24h","48h","96h","192h")
 
-for horizon in (1, 5, 10, 30):
-    fwd_ret = ret.rolling(horizon).sum().shift(-horizon)
-    vol_h = vol_ret * np.sqrt(horizon)
-    y_h = (fwd_ret / vol_h).replace([np.inf, -np.inf], np.nan).values
-    valid = ~(np.isnan(X).any(axis=1) | np.isnan(y_h))
-    X_v, y_v = X[valid], y_h[valid]
-    
-    if X_v.shape[0] > 10:
-        split_idx = X_v.shape[0] // 2
-        X_train, y_train = X_v[:split_idx], y_v[:split_idx]
-        ridge = RidgeCV(cv=5, alphas=np.logspace(-6, 6, 13))
-        ridge.fit(X_train, y_train)
-        b = ridge.coef_
-        betas.append(b)
-    else:
-        betas.append(default_beta)
-
-beta_1d, beta_5d, beta_10d, beta_30d = betas[0], betas[1], betas[2], betas[3]
-beta_reg = (np.array(beta_1d) + np.array(beta_5d) + np.array(beta_10d) + np.array(beta_30d)) / 4
 pos_reg = beta_reg[0] * pos1 + beta_reg[1] * pos2 + beta_reg[2] * pos3
 pnl_reg = pos_reg.shift(1) * ret
 pnl_reg = pnl_reg.fillna(0)
 ```
+
+For captions, use `horizon_labels` (e.g. `f"Reg: 4 models ({'/'.join(horizon_labels)} fwd ret/vol)"`).
 
 ---
 

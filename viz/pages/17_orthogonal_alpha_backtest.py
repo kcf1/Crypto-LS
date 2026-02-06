@@ -17,7 +17,8 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from sklearn.linear_model import RidgeCV, LinearRegression
+from statsmodels.regression.rolling import RollingOLS
+from statsmodels.tools import add_constant
 
 from config import settings
 from data import Storage
@@ -30,6 +31,7 @@ from viz.backtest_utils import (
     build_stats,
     alpha_beta,
     annual_turnover,
+    ridge_aggregation,
 )
 
 TIMEFRAME_5M = "5m"
@@ -165,38 +167,34 @@ def run_strategy(
     
     # 2. Volatility for risk adjustment
     vol_estimator = ret.ewm(span=vol_lookback, adjust=False).std().clip(lower=VOL_FLOOR)
-    
-    # 3. Forward risk-adjusted returns: y = forward_return / vol
-    forward_ret = ret.rolling(forward_window).sum().shift(-forward_window)
-    vol_forward = vol_estimator * np.sqrt(forward_window)
-    y = (forward_ret / vol_forward).replace([np.inf, -np.inf], np.nan)
-    
-    # 4. Rolling OLS: y ~ const + momentum.shift(forward_window)
-    # Extract alpha (intercept) which is orthogonal to momentum
-    X = momentum.shift(forward_window).values.reshape(-1, 1)
-    alpha_signal = pd.Series(0.0, index=ret.index)
-    
-    for i in range(regression_window, len(ret)):
-        if i < len(y) and not (np.isnan(y.iloc[i]) or np.isnan(X[i, 0])):
-            # Use rolling window for regression
-            start_idx = max(0, i - regression_window)
-            end_idx = i + 1
-            
-            y_window = y.iloc[start_idx:end_idx].values
-            X_window = X[start_idx:end_idx]
-            
-            valid = ~(np.isnan(y_window) | np.isnan(X_window).any(axis=1))
-            if valid.sum() > 10:
-                y_valid = y_window[valid]
-                X_valid = X_window[valid]
-                
-                # Fit OLS: y ~ const + X
-                X_with_const = np.column_stack([np.ones(len(X_valid)), X_valid])
-                try:
-                    reg = LinearRegression().fit(X_with_const, y_valid)
-                    alpha_signal.iloc[i] = reg.intercept_  # Alpha (intercept) is orthogonal to momentum
-                except:
-                    alpha_signal.iloc[i] = 0.0
+
+    # 3. y = current (backward) return over last n periods; X = momentum n periods ago (aligned to current)
+    # No future data: y_t = return from t-n to t, X_t = signal at t-n
+    n = forward_window
+    y = ret.rolling(n).sum()  # backward-looking: current return (price now minus price n back)
+    X_series = momentum.shift(n)  # signals n periods back, shifted so row t has signal at t-n
+
+    # 4. Align: valid from index n onward; RollingOLS on (y, X)
+    start_idx = n
+    y_roll = y.iloc[start_idx:].astype(float)
+    X_roll = X_series.iloc[start_idx:].astype(float)
+    valid = y_roll.notna() & X_roll.notna()
+    y_roll = y_roll[valid]
+    X_roll = X_roll[valid]
+    if len(y_roll) < regression_window:
+        alpha_signal = pd.Series(0.0, index=ret.index)
+    else:
+        exog = add_constant(X_roll.values)
+        window = max(3, min(regression_window, len(y_roll) - 1))  # need window > n_regressors (2)
+        rol = RollingOLS(y_roll.values, exog, window=window).fit(params_only=True)
+        # Intercept is first column (const)
+        if hasattr(rol.params, "iloc"):
+            alpha_vals = rol.params.iloc[:, 0].values
+        else:
+            alpha_vals = rol.params[:, 0]
+        alpha_series = pd.Series(alpha_vals, index=y_roll.index)
+        # Latest few bars: use last available const from period-matched model
+        alpha_signal = alpha_series.reindex(ret.index).ffill().fillna(0)
     
     # 5. Standardize alpha signal
     alpha_std = alpha_signal.ewm(span=vol_lookback, adjust=False).std().clip(lower=VOL_FLOOR)
@@ -226,28 +224,9 @@ pnl1, pos1, s1 = run_strategy(fast1, slow_mult1, forward1, reg_window1, vol_look
 pnl2, pos2, s2 = run_strategy(fast2, slow_mult2, forward2, reg_window2, vol_look2, use_decay2, target_vol, cap2)
 pnl3, pos3, s3 = run_strategy(fast3, slow_mult3, forward3, reg_window3, vol_look3, use_decay3, target_vol, cap3)
 
-# Reg: 4 models
-vol_ret = ret.ewm(span=30, adjust=False).std().clip(lower=VOL_FLOOR)
-X = np.column_stack([pos1.values, pos2.values, pos3.values])
-default_beta = np.array([1.0 / 3, 1.0 / 3, 1.0 / 3])
-betas = []
-for horizon in (1, 5, 10, 30):
-    fwd_ret = ret.rolling(horizon).sum().shift(-horizon)
-    vol_h = vol_ret * np.sqrt(horizon)
-    y_h = (fwd_ret / vol_h).replace([np.inf, -np.inf], np.nan).values
-    valid = ~(np.isnan(X).any(axis=1) | np.isnan(y_h))
-    X_v, y_v = X[valid], y_h[valid]
-    if X_v.shape[0] > 10:
-        split_idx = X_v.shape[0] // 2
-        X_train, y_train = X_v[:split_idx], y_v[:split_idx]
-        ridge = RidgeCV(cv=5, alphas=np.logspace(-6, 6, 13))
-        ridge.fit(X_train, y_train)
-        b = ridge.coef_
-        betas.append(b)
-    else:
-        betas.append(default_beta)
-beta_1d, beta_5d, beta_10d, beta_30d = betas[0], betas[1], betas[2], betas[3]
-beta_reg = (np.array(beta_1d) + np.array(beta_5d) + np.array(beta_10d) + np.array(beta_30d)) / 4
+# Reg: 4 models (24h/48h/96h/192h forward vol-normalized return)
+beta_reg, betas, horizon_labels = ridge_aggregation(pos1, pos2, pos3, ret, vol_ewm_span=30, is_intraday_hourly=True)
+beta_24h, beta_48h, beta_96h, beta_192h = betas[0], betas[1], betas[2], betas[3]
 pos_reg = beta_reg[0] * pos1 + beta_reg[1] * pos2 + beta_reg[2] * pos3
 pnl_reg = pos_reg.shift(1) * ret
 pnl_reg = pnl_reg.fillna(0)
@@ -351,8 +330,11 @@ with col_main:
     
     st.caption(f"Total hourly bars: {len(hourly)} | {hourly['datetime'].min()} → {hourly['datetime'].max()} (from {len(df_5m)} 5m bars)")
     st.caption(
-        f"Reg (β≥0): 4 models (1h/5h/10h/30h fwd ret/vol), avg betas = [{beta_reg[0]:.3f}, {beta_reg[1]:.3f}, {beta_reg[2]:.3f}] "
-        f"(1h: [{beta_1d[0]:.2f},{beta_1d[1]:.2f},{beta_1d[2]:.2f}] 5h: [{beta_5d[0]:.2f},{beta_5d[1]:.2f},{beta_5d[2]:.2f}] "
-        f"10h: [{beta_10d[0]:.2f},{beta_10d[1]:.2f},{beta_10d[2]:.2f}] 30h: [{beta_30d[0]:.2f},{beta_30d[1]:.2f},{beta_30d[2]:.2f}])"
+        f"Reg (β≥0): 4 models ({'/'.join(horizon_labels)} fwd ret/vol), avg betas = [{beta_reg[0]:.3f}, {beta_reg[1]:.3f}, {beta_reg[2]:.3f}] "
+        f"({horizon_labels[0]}: [{beta_24h[0]:.2f},{beta_24h[1]:.2f},{beta_24h[2]:.2f}] {horizon_labels[1]}: [{beta_48h[0]:.2f},{beta_48h[1]:.2f},{beta_48h[2]:.2f}] "
+        f"{horizon_labels[2]}: [{beta_96h[0]:.2f},{beta_96h[1]:.2f},{beta_96h[2]:.2f}] {horizon_labels[3]}: [{beta_192h[0]:.2f},{beta_192h[1]:.2f},{beta_192h[2]:.2f}])"
     )
-    st.caption("Signal: alpha (intercept) from rolling OLS(y ~ const + momentum), orthogonal to momentum, standardized, × strategy decay (optional), vol-matched × cap.")
+    st.caption(
+    "Signal: y = current return (backward n-period), X = momentum n periods back; RollingOLS(y ~ const + X); "
+    "const (alpha orthogonal to momentum) = signal; latest bars use last available const. Standardized, × decay, vol-matched × cap."
+)

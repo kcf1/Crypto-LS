@@ -5,11 +5,17 @@ This module contains common functions used across multiple backtest pages:
 - Data resampling (intraday to daily)
 - Statistics calculations
 - Volatility rescaling
+- Ridge aggregation (forward return combination)
 - Common constants
 """
 
 import numpy as np
 import pandas as pd
+
+try:
+    from sklearn.linear_model import RidgeCV
+except ImportError:
+    RidgeCV = None
 
 # Constants
 TRADING_DAYS = 252  # For daily/annualized statistics
@@ -102,6 +108,86 @@ def prepare_daily_stats_series(
 
 
 # ============================================================================
+# Ridge Aggregation (forward return combination)
+# ============================================================================
+
+# Forward return horizons: hourly backtests use 24h/48h/96h/192h; daily backtests use 1d/5d/10d/30d
+RIDGE_HORIZONS_HOURLY = (24, 48, 96, 192)   # periods (hours)
+RIDGE_LABELS_HOURLY = ("24h", "48h", "96h", "192h")
+RIDGE_HORIZONS_DAILY = (1, 5, 10, 30)       # periods (days)
+RIDGE_LABELS_DAILY = ("1d", "5d", "10d", "30d")
+
+
+def ridge_aggregation(
+    pos1: pd.Series,
+    pos2: pd.Series,
+    pos3: pd.Series,
+    ret: pd.Series,
+    vol_ewm_span: int = 30,
+    is_intraday_hourly: bool = False,
+    train_fraction: float = 0.5,
+    min_samples: int = 10,
+) -> tuple[np.ndarray, list[np.ndarray], tuple[str, ...]]:
+    """
+    Combine three position series using Ridge regression on forward vol-normalized returns.
+
+    For each forward horizon, fits: y = forward_return / vol ~ X @ beta, where X = [pos1, pos2, pos3].
+    Training uses first half of data only; RidgeCV 5-fold for alpha. Returns average of the 4 betas.
+
+    - **Hourly data**: forward horizons 24h, 48h, 96h, 192h (labels "24h", "48h", "96h", "192h").
+    - **Daily (EOD) data**: forward horizons 1d, 5d, 10d, 30d (labels "1d", "5d", "10d", "30d").
+
+    Args:
+        pos1, pos2, pos3: Position series (same length as ret).
+        ret: Return series.
+        vol_ewm_span: EWM span for volatility estimate.
+        is_intraday_hourly: If True, use 24h/48h/96h/192h horizons; if False, use 1d/5d/10d/30d.
+        train_fraction: Fraction of valid data used for training (default 0.5).
+        min_samples: Minimum samples to fit Ridge; otherwise use equal weights.
+
+    Returns:
+        beta_reg: Average of 4 horizon betas, shape (3,).
+        betas: List of 4 coefficient arrays, one per horizon.
+        horizon_labels: Tuple of 4 strings for display (e.g. ("24h", "48h", "96h", "192h")).
+    """
+    if RidgeCV is None:
+        default_beta = np.array([1.0 / 3, 1.0 / 3, 1.0 / 3])
+        if is_intraday_hourly:
+            return default_beta, [default_beta] * 4, RIDGE_LABELS_HOURLY
+        return default_beta, [default_beta] * 4, RIDGE_LABELS_DAILY
+
+    vol_ret = ret.ewm(span=vol_ewm_span, adjust=False).std().clip(lower=VOL_FLOOR)
+    X = np.column_stack([pos1.values, pos2.values, pos3.values])
+    default_beta = np.array([1.0 / 3, 1.0 / 3, 1.0 / 3])
+
+    if is_intraday_hourly:
+        horizons = RIDGE_HORIZONS_HOURLY
+        labels = RIDGE_LABELS_HOURLY
+    else:
+        horizons = RIDGE_HORIZONS_DAILY
+        labels = RIDGE_LABELS_DAILY
+
+    betas = []
+    for horizon in horizons:
+        fwd_ret = ret.rolling(horizon).sum().shift(-horizon)
+        vol_h = vol_ret * np.sqrt(horizon)
+        y_h = (fwd_ret / vol_h).replace([np.inf, -np.inf], np.nan).values
+        valid = ~(np.isnan(X).any(axis=1) | np.isnan(y_h))
+        X_v, y_v = X[valid], y_h[valid]
+        if X_v.shape[0] > min_samples:
+            split_idx = int(X_v.shape[0] * train_fraction)
+            X_train, y_train = X_v[:split_idx], y_v[:split_idx]
+            ridge = RidgeCV(cv=5, alphas=np.logspace(-6, 6, 13))
+            ridge.fit(X_train, y_train)
+            betas.append(ridge.coef_)
+        else:
+            betas.append(default_beta)
+
+    beta_reg = (np.array(betas[0]) + np.array(betas[1]) + np.array(betas[2]) + np.array(betas[3])) / 4
+    return beta_reg, betas, labels
+
+
+# ============================================================================
 # Volatility Rescaling
 # ============================================================================
 
@@ -154,33 +240,31 @@ def level_from_log(cumlog: pd.Series) -> pd.Series:
 
 def max_drawdown(cumlog: pd.Series) -> float:
     """
-    Calculate maximum drawdown from cumulative log returns.
+    Maximum drawdown from cumulative log returns: peak cumlog - trough cumlog.
     
     Args:
         cumlog: Cumulative log return series
     
     Returns:
-        Maximum drawdown as percentage (e.g., 15.5 for 15.5%)
+        Maximum drawdown in log space, scaled by 100 (e.g., 15.5 for 0.155 log)
     """
-    level = level_from_log(cumlog)
-    peak = level.cummax()
-    dd = peak - level
+    peak = cumlog.cummax()
+    dd = peak - cumlog
     return float(dd.max()) * 100
 
 
 def avg_drawdown(cumlog: pd.Series) -> float:
     """
-    Calculate average drawdown from cumulative log returns.
+    Average drawdown from cumulative log returns: peak cumlog - cumlog at each time.
     
     Args:
         cumlog: Cumulative log return series
     
     Returns:
-        Average drawdown as percentage
+        Average drawdown in log space, scaled by 100
     """
-    level = level_from_log(cumlog)
-    peak = level.cummax()
-    dd = peak - level
+    peak = cumlog.cummax()
+    dd = peak - cumlog
     return float(dd.mean()) * 100
 
 
@@ -239,18 +323,17 @@ def es95(series: pd.Series) -> float:
 
 def cdd95(cumlog: pd.Series) -> float:
     """
-    Conditional Drawdown at Risk (CDD) at 95% confidence level.
-    Expected drawdown given that drawdown exceeds the 95th percentile threshold.
+    Conditional Drawdown at Risk (CDD) at 95%: expected drawdown when drawdown >= 95th percentile.
+    Drawdown = peak cumlog - cumlog.
     
     Args:
         cumlog: Cumulative log return series
     
     Returns:
-        CDD95 as percentage
+        CDD95 in log space, scaled by 100
     """
-    level = np.exp(cumlog) - 1
-    peak = level.cummax()
-    drawdown = peak - level
+    peak = cumlog.cummax()
+    drawdown = peak - cumlog
     q = drawdown.quantile(0.95)
     return float(drawdown[drawdown >= q].mean()) * 100
 

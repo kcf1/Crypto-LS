@@ -17,8 +17,6 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from sklearn.linear_model import RidgeCV
-
 from config import settings
 from data import Storage
 from viz.backtest_utils import (
@@ -30,6 +28,7 @@ from viz.backtest_utils import (
     build_stats,
     alpha_beta,
     annual_turnover,
+    ridge_aggregation,
 )
 
 TIMEFRAME_5M = "5m"
@@ -174,28 +173,9 @@ pnl1, pos1, s1 = run_strategy(vol_look1, reversal_look1, reversal_thresh1, volum
 pnl2, pos2, s2 = run_strategy(vol_look2, reversal_look2, reversal_thresh2, volume_thresh2, target_vol, cap2)
 pnl3, pos3, s3 = run_strategy(vol_look3, reversal_look3, reversal_thresh3, volume_thresh3, target_vol, cap3)
 
-# Reg: 4 models
-vol_ret = ret.ewm(span=30, adjust=False).std().clip(lower=VOL_FLOOR)
-X = np.column_stack([pos1.values, pos2.values, pos3.values])
-default_beta = np.array([1.0 / 3, 1.0 / 3, 1.0 / 3])
-betas = []
-for horizon in (1, 5, 10, 30):
-    fwd_ret = ret.rolling(horizon).sum().shift(-horizon)
-    vol_h = vol_ret * np.sqrt(horizon)
-    y_h = (fwd_ret / vol_h).replace([np.inf, -np.inf], np.nan).values
-    valid = ~(np.isnan(X).any(axis=1) | np.isnan(y_h))
-    X_v, y_v = X[valid], y_h[valid]
-    if X_v.shape[0] > 10:
-        split_idx = X_v.shape[0] // 2
-        X_train, y_train = X_v[:split_idx], y_v[:split_idx]
-        ridge = RidgeCV(cv=5, alphas=np.logspace(-6, 6, 13))
-        ridge.fit(X_train, y_train)
-        b = ridge.coef_
-        betas.append(b)
-    else:
-        betas.append(default_beta)
-beta_1d, beta_5d, beta_10d, beta_30d = betas[0], betas[1], betas[2], betas[3]
-beta_reg = (np.array(beta_1d) + np.array(beta_5d) + np.array(beta_10d) + np.array(beta_30d)) / 4
+# Reg: 4 models (24h/48h/96h/192h forward vol-normalized return)
+beta_reg, betas, horizon_labels = ridge_aggregation(pos1, pos2, pos3, ret, vol_ewm_span=30, is_intraday_hourly=True)
+beta_24h, beta_48h, beta_96h, beta_192h = betas[0], betas[1], betas[2], betas[3]
 pos_reg = beta_reg[0] * pos1 + beta_reg[1] * pos2 + beta_reg[2] * pos3
 pnl_reg = pos_reg.shift(1) * ret
 pnl_reg = pnl_reg.fillna(0)
@@ -299,8 +279,8 @@ with col_main:
     
     st.caption(f"Total hourly bars: {len(hourly)} | {hourly['datetime'].min()} → {hourly['datetime'].max()} (from {len(df_5m)} 5m bars)")
     st.caption(
-        f"Reg (β≥0): 4 models (1h/5h/10h/30h fwd ret/vol), avg betas = [{beta_reg[0]:.3f}, {beta_reg[1]:.3f}, {beta_reg[2]:.3f}] "
-        f"(1h: [{beta_1d[0]:.2f},{beta_1d[1]:.2f},{beta_1d[2]:.2f}] 5h: [{beta_5d[0]:.2f},{beta_5d[1]:.2f},{beta_5d[2]:.2f}] "
-        f"10h: [{beta_10d[0]:.2f},{beta_10d[1]:.2f},{beta_10d[2]:.2f}] 30h: [{beta_30d[0]:.2f},{beta_30d[1]:.2f},{beta_30d[2]:.2f}])"
+        f"Reg (β≥0): 4 models ({'/'.join(horizon_labels)} fwd ret/vol), avg betas = [{beta_reg[0]:.3f}, {beta_reg[1]:.3f}, {beta_reg[2]:.3f}] "
+        f"({horizon_labels[0]}: [{beta_24h[0]:.2f},{beta_24h[1]:.2f},{beta_24h[2]:.2f}] {horizon_labels[1]}: [{beta_48h[0]:.2f},{beta_48h[1]:.2f},{beta_48h[2]:.2f}] "
+        f"{horizon_labels[2]}: [{beta_96h[0]:.2f},{beta_96h[1]:.2f},{beta_96h[2]:.2f}] {horizon_labels[3]}: [{beta_192h[0]:.2f},{beta_192h[1]:.2f},{beta_192h[2]:.2f}])"
     )
     st.caption("Signal: -sign(momentum) when |momentum z-score| > reversal_threshold and volume_z > volume_threshold, vol-matched × cap.")
