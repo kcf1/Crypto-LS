@@ -37,6 +37,13 @@ pages = [
     st.Page("pages/4_trend_following_backtest.py", title="Trend-Following Backtest", icon="📈"),
     st.Page("pages/5_trend_following_regime.py", title="Trend-Following (Regime)", icon="🔄"),
     st.Page("pages/6_channel_breakout_backtest.py", title="Channel-Breakout Backtest", icon="📊"),
+    st.Page("pages/7_acceleration_backtest.py", title="Acceleration Backtest", icon="⚡"),
+    st.Page("pages/8_block_momentum_backtest.py", title="Block Momentum Backtest", icon="📊"),
+    st.Page("pages/16_mean_reversion_backtest.py", title="Mean Reversion Backtest", icon="🔄"),
+    st.Page("pages/17_orthogonal_alpha_backtest.py", title="Orthogonal Alpha Backtest", icon="📈"),
+    st.Page("pages/18_wed_thu_backtest.py", title="Wed/Thu Calendar Backtest", icon="📅"),
+    st.Page("pages/19_ema_vol_backtest.py", title="EMA Vol Backtest", icon="📈"),
+    st.Page("pages/20_breakout_vol_backtest.py", title="Breakout Vol Backtest", icon="📊"),
     st.Page("pages/8_open_interest.py", title="Open Interest", icon="💹"),
     st.Page("pages/9_funding_rate.py", title="Funding Rate", icon="💰"),
     st.Page("pages/10_basis.py", title="Basis", icon="📐"),
@@ -71,6 +78,23 @@ with st.sidebar:
         st.caption("Same as above with position scaled by volatility regime")
         st.page_link("pages/6_channel_breakout_backtest.py", label="Channel-Breakout Backtest", icon="📊")
         st.caption("Signal = (price - mid) / channel range × 3, 2d EMA smooth")
+        
+        st.divider()
+        st.markdown("**📜 Old Strategies**")
+        st.page_link("pages/7_acceleration_backtest.py", label="Acceleration Backtest", icon="⚡")
+        st.caption("Signal = acceleration of EMA crossover (momentum-of-momentum), standardized, vol-matched")
+        st.page_link("pages/8_block_momentum_backtest.py", label="Block Momentum Backtest", icon="📊")
+        st.caption("Signal = (higher high + higher low) / range over blocks, smoothed, vol-matched")
+        st.page_link("pages/16_mean_reversion_backtest.py", label="Mean Reversion Backtest", icon="🔄")
+        st.caption("Signal = -sign(momentum) when |momentum| > threshold and volume decay > threshold")
+        st.page_link("pages/17_orthogonal_alpha_backtest.py", label="Orthogonal Alpha Backtest", icon="📈")
+        st.caption("Signal = alpha orthogonal to momentum via rolling OLS, standardized, vol-matched")
+        st.page_link("pages/18_wed_thu_backtest.py", label="Wed/Thu Calendar Backtest", icon="📅")
+        st.caption("Signal = +1 on Wed, -1 on Thu, 0 otherwise; calendar effect, vol-matched")
+        st.page_link("pages/19_ema_vol_backtest.py", label="EMA Vol Backtest", icon="📈")
+        st.caption("Signal = EMA crossover standardized, × Weibull CDF vol tilt, × strategy decay, vol-matched")
+        st.page_link("pages/20_breakout_vol_backtest.py", label="Breakout Vol Backtest", icon="📊")
+        st.caption("Signal = (price - mid) / range × 2, smoothed, × Weibull CDF vol tilt, × strategy decay, vol-matched")
 
     with st.expander("⚡ Futures Market Data (Binance)", expanded=False):
         st.page_link("pages/8_open_interest.py", label="Open Interest", icon="💹")
