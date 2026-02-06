@@ -126,7 +126,7 @@ pnl1, pos1, s1 = run_strategy(fast1, slow_mult1, std_look1, vol_look1, target_vo
 pnl2, pos2, s2 = run_strategy(fast2, slow_mult2, std_look2, vol_look2, target_vol, cap2)
 pnl3, pos3, s3 = run_strategy(fast3, slow_mult3, std_look3, vol_look3, target_vol, cap3)
 
-# Reg: 4 models (1d / 5d / 10d / 30d forward vol-normalized return = β·positions), RidgeCV 5-fold, then average betas
+# Reg: 4 models (1d / 5d / 10d / 30d forward vol-normalized return = β·positions), RidgeCV 5-fold, train on first half only
 vol_ret = ret.ewm(span=30, adjust=False).std().clip(lower=VOL_FLOOR)
 X = np.column_stack([pos1.values, pos2.values, pos3.values])
 default_beta = np.array([1.0 / 3, 1.0 / 3, 1.0 / 3])
@@ -138,8 +138,11 @@ for horizon in (1, 5, 10, 30):
     valid = ~(np.isnan(X).any(axis=1) | np.isnan(y_h))
     X_v, y_v = X[valid], y_h[valid]
     if X_v.shape[0] > 10:
+        # Use first half of data for training
+        split_idx = X_v.shape[0] // 2
+        X_train, y_train = X_v[:split_idx], y_v[:split_idx]
         ridge = RidgeCV(cv=5, alphas=np.logspace(-6, 6, 13))
-        ridge.fit(X_v, y_v)
+        ridge.fit(X_train, y_train)
         b = ridge.coef_
         betas.append(b)
     else:

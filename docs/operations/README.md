@@ -20,7 +20,11 @@ operations/
 │   └── booking-and-recon.md
 │
 └── sops/              # Standard Operating Procedures
-    └── sop-add-new-data-table.md
+    ├── sop-add-new-data-table.md
+    ├── sop-handling-access-denied-errors.md
+    ├── sop-booking-system-troubleshooting.md
+    ├── sop-create-book-via-api.md
+    └── sop-create-backtest-page.md
 ```
 
 ## Available Manuals
@@ -100,6 +104,29 @@ operations/
   - Testing and verification
   - Service updates
   - Complete checklist
+
+- **[SOP: Handling Access Denied Errors](sops/sop-handling-access-denied-errors.md)**
+  - Git permission errors in Cursor AI
+  - Docker access denied errors
+  - Using required_permissions parameter
+  - Alternative solutions and troubleshooting
+
+- **[SOP: Creating Backtest Page](sops/sop-create-backtest-page.md)**
+  - Step-by-step guide for creating Streamlit backtest pages
+  - Data loading and preparation
+  - Strategy implementation patterns
+  - Visualization and statistics table setup
+  - Page registration and testing
+
+- **[SOP: Booking System Troubleshooting](sops/sop-booking-system-troubleshooting.md)**
+  - Common booking system issues
+  - Debugging procedures
+  - Resolution steps
+
+- **[SOP: Create Book via API](sops/sop-create-book-via-api.md)**
+  - Creating books through API
+  - Request format and parameters
+  - Verification steps
 
 
 ## Quick Reference

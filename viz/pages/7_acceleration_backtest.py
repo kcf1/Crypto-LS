@@ -1,9 +1,9 @@
 """
-Page: Channel-breakout backtest on EOD data.
+Page: Acceleration (momentum-of-momentum) backtest on EOD data.
 
-Signal = (price - (rolling_high+rolling_low)/2) / (rolling_high - rolling_low) * 3,
-smoothed with 2d EMA; position = vol-matched trend strength (signal * target_vol / vol_estimator).
-Three PnL series with changeable parameters; same stats table as trend-following.
+Signal = acceleration of EMA crossover (diff of standardized level) rather than level itself.
+Captures trend inflection and strength changes. Standardized and vol-matched position.
+Three PnL series with changeable parameters; toggle-able plot; enhanced stats table.
 """
 
 import sys
@@ -25,11 +25,11 @@ from data import Storage
 TIMEFRAME_5M = "5m"
 TRADING_DAYS = 252
 VOL_FLOOR = 1e-8
-SIGNAL_SMOOTH_SPAN = 2  # 2d EMA on raw channel signal
 
-st.title("Channel-breakout backtest")
+st.title("Acceleration (momentum-of-momentum) backtest")
 st.caption(
-    "EOD close, signal = (price - mid) / (high - low) × 3, smoothed 2d EMA; vol-matched position. Cum return = cumsum(log return)."
+    "EOD close, signal = acceleration of EMA crossover (diff of standardized level), "
+    "standardized and capped; vol-matched position. Cum return = cumsum(log return)."
 )
 
 storage = Storage()
@@ -47,30 +47,39 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Strategy 1")
-    channel1 = st.slider("Channel lookback (days)", 1, 30, 20, key="channel1_cb")
-    vol_look1 = st.slider("Vol-estimator lookback (days)", 5, 90, 30, key="vol1_cb")
-    cap1 = st.slider("Position cap", 0.5, 5.0, 3.0, 0.1, key="cap1_cb")
+    fast1 = st.slider("Fast lookback (days)", 1, 30, 20, key="fast1_acc")
+    slow_mult1 = st.slider("Slow multiple", 2, 8, 4, key="slow_mult1_acc")
+    diff_mult1 = st.slider("Diff multiplier", 1, 5, 2, key="diff_mult1_acc")
+    std_look1 = st.slider("Std lookback (days)", 5, 90, 30, key="std1_acc")
+    vol_look1 = st.slider("Vol-estimator lookback (days)", 5, 90, 30, key="vol1_acc")
+    cap1 = st.slider("Position cap", 0.5, 5.0, 3.0, 0.1, key="cap1_acc")
 
     st.subheader("Strategy 2")
-    channel2 = st.slider("Channel lookback (days)", 1, 30, 15, key="channel2_cb")
-    vol_look2 = st.slider("Vol-estimator lookback (days)", 5, 90, 30, key="vol2_cb")
-    cap2 = st.slider("Position cap", 0.5, 5.0, 3.0, 0.1, key="cap2_cb")
+    fast2 = st.slider("Fast lookback (days)", 1, 30, 20, key="fast2_acc")
+    slow_mult2 = st.slider("Slow multiple", 2, 8, 4, key="slow_mult2_acc")
+    diff_mult2 = st.slider("Diff multiplier", 1, 5, 2, key="diff_mult2_acc")
+    std_look2 = st.slider("Std lookback (days)", 5, 90, 30, key="std2_acc")
+    vol_look2 = st.slider("Vol-estimator lookback (days)", 5, 90, 30, key="vol2_acc")
+    cap2 = st.slider("Position cap", 0.5, 5.0, 3.0, 0.1, key="cap2_acc")
 
     st.subheader("Strategy 3")
-    channel3 = st.slider("Channel lookback (days)", 1, 30, 10, key="channel3_cb")
-    vol_look3 = st.slider("Vol-estimator lookback (days)", 5, 90, 30, key="vol3_cb")
-    cap3 = st.slider("Position cap", 0.5, 5.0, 3.0, 0.1, key="cap3_cb")
+    fast3 = st.slider("Fast lookback (days)", 1, 30, 20, key="fast3_acc")
+    slow_mult3 = st.slider("Slow multiple", 2, 8, 4, key="slow_mult3_acc")
+    diff_mult3 = st.slider("Diff multiplier", 1, 5, 2, key="diff_mult3_acc")
+    std_look3 = st.slider("Std lookback (days)", 5, 90, 30, key="std3_acc")
+    vol_look3 = st.slider("Vol-estimator lookback (days)", 5, 90, 30, key="vol3_acc")
+    cap3 = st.slider("Position cap", 0.5, 5.0, 3.0, 0.1, key="cap3_acc")
 
     st.divider()
-    target_vol = st.slider("Target vol (ann) — all series", 0.05, 0.50, 0.15, 0.01, key="target_vol_cb")
+    target_vol = st.slider("Target vol (ann) — all series", 0.05, 0.50, 0.15, 0.01, key="target_vol_acc")
 
     st.divider()
-    show_raw = st.checkbox("Show Raw", value=True, key="show_raw_cb")
-    show_s1 = st.checkbox("Show Strategy 1", value=True, key="show_s1_cb")
-    show_s2 = st.checkbox("Show Strategy 2", value=True, key="show_s2_cb")
-    show_s3 = st.checkbox("Show Strategy 3", value=True, key="show_s3_cb")
-    show_avg = st.checkbox("Show Avg (1+2+3)", value=True, key="show_avg_cb")
-    show_reg = st.checkbox("Show Reg (β≥0)", value=True, key="show_reg_cb")
+    show_raw = st.checkbox("Show Raw", value=True, key="show_raw_acc")
+    show_s1 = st.checkbox("Show Strategy 1", value=True, key="show_s1_acc")
+    show_s2 = st.checkbox("Show Strategy 2", value=True, key="show_s2_acc")
+    show_s3 = st.checkbox("Show Strategy 3", value=True, key="show_s3_acc")
+    show_avg = st.checkbox("Show Avg (1+2+3)", value=True, key="show_avg_acc")
+    show_reg = st.checkbox("Show Reg (β≥0)", value=True, key="show_reg_acc")
 
 rows = storage.read_ohlcv(symbol=symbol, timeframe=TIMEFRAME_5M)
 if not rows:
@@ -98,28 +107,52 @@ dates = eod["date"]
 
 
 def run_strategy(
-    channel_lookback: int,
+    fast_lookback: int,
+    slow_multiple: int,
+    diff_multiplier: int,
+    std_lookback: int,
     vol_lookback: int,
     target_vol_ann: float,
     cap: float,
 ) -> tuple[pd.Series, pd.Series, pd.Series]:
-    rolling_high = close.rolling(window=channel_lookback).max()
-    rolling_low = close.rolling(window=channel_lookback).min()
-    mid = (rolling_high + rolling_low) / 2
-    channel_range = (rolling_high - rolling_low).clip(lower=VOL_FLOOR)
-    signal_raw = (close - mid) / channel_range * 3
-    signal_smooth = signal_raw.ewm(span=SIGNAL_SMOOTH_SPAN, adjust=False).mean()
+    """
+    Acceleration strategy: uses acceleration of EMA crossover rather than level.
+    
+    Returns: (pnl, position, signal_accel)
+    """
+    # 1. Calculate EMA crossover level
+    slow_span = int(fast_lookback * slow_multiple)
+    fast_ema = close.ewm(span=fast_lookback, adjust=False).mean()
+    slow_ema = close.ewm(span=slow_span, adjust=False).mean()
+    signal_level_raw = fast_ema - slow_ema
+    
+    # 2. Standardize the level
+    signal_level_std_series = signal_level_raw.ewm(span=std_lookback, adjust=False).std().clip(lower=VOL_FLOOR)
+    signal_level = (signal_level_raw / signal_level_std_series).clip(-3, 3)
+    
+    # 3. Calculate acceleration (diff of standardized level)
+    diff_window = fast_lookback * diff_multiplier
+    signal_accel_raw = signal_level.diff(diff_window)
+    
+    # 4. Re-standardize acceleration
+    signal_accel_std_series = signal_accel_raw.ewm(span=std_lookback, adjust=False).std().clip(lower=VOL_FLOOR)
+    signal_accel = (signal_accel_raw / signal_accel_std_series).clip(-2, 2)
+    
+    # 5. Volatility estimation and position sizing
     vol_estimator = ret.ewm(span=vol_lookback, adjust=False).std().clip(lower=VOL_FLOOR)
     target_daily = target_vol_ann / np.sqrt(TRADING_DAYS)
-    position = (signal_smooth * target_daily / vol_estimator).clip(-cap, cap)
+    position = (signal_accel * target_daily / vol_estimator).clip(-cap, cap)
+    
+    # 6. PnL calculation (shift position by 1 to avoid lookahead)
     pnl = position.shift(1) * ret
     pnl = pnl.fillna(0)
-    return pnl, position, signal_smooth
+    
+    return pnl, position, signal_accel
 
 
-pnl1, pos1, s1 = run_strategy(channel1, vol_look1, target_vol, cap1)
-pnl2, pos2, s2 = run_strategy(channel2, vol_look2, target_vol, cap2)
-pnl3, pos3, s3 = run_strategy(channel3, vol_look3, target_vol, cap3)
+pnl1, pos1, s1 = run_strategy(fast1, slow_mult1, diff_mult1, std_look1, vol_look1, target_vol, cap1)
+pnl2, pos2, s2 = run_strategy(fast2, slow_mult2, diff_mult2, std_look2, vol_look2, target_vol, cap2)
+pnl3, pos3, s3 = run_strategy(fast3, slow_mult3, diff_mult3, std_look3, vol_look3, target_vol, cap3)
 
 # Reg: 4 models (1d / 5d / 10d / 30d forward vol-normalized return = β·positions), RidgeCV 5-fold, train on first half only
 vol_ret = ret.ewm(span=30, adjust=False).std().clip(lower=VOL_FLOOR)
@@ -144,16 +177,17 @@ for horizon in (1, 5, 10, 30):
         betas.append(default_beta)
 beta_1d, beta_5d, beta_10d, beta_30d = betas[0], betas[1], betas[2], betas[3]
 beta_reg = (np.array(beta_1d) + np.array(beta_5d) + np.array(beta_10d) + np.array(beta_30d)) / 4
+# Combined position = avg(β)·pos; PnL = position.shift(1) * ret
 pos_reg = beta_reg[0] * pos1 + beta_reg[1] * pos2 + beta_reg[2] * pos3
 pnl_reg = pos_reg.shift(1) * ret
 pnl_reg = pnl_reg.fillna(0)
 
-# Avg of 3
+# Avg of 3: position = simple average of the three positions
 pos_avg = (pos1 + pos2 + pos3) / 3
 pnl_avg = pos_avg.shift(1) * ret
 pnl_avg = pnl_avg.fillna(0)
 
-# Rescale all series to match target vol
+# Rescale all series to match target vol (annualized); scale = target_vol_daily / realized_daily_std
 target_vol_daily = target_vol / np.sqrt(TRADING_DAYS)
 
 
@@ -172,7 +206,7 @@ pnl3, pos3 = rescale_to_target_vol(pnl3, pos3)
 pnl_avg, pos_avg = rescale_to_target_vol(pnl_avg, pos_avg)
 pnl_reg, pos_reg = rescale_to_target_vol(pnl_reg, pos_reg)
 
-# Cum return
+# Cum return: raw = cumsum(log return), strategy = cumsum(log(1+pnl))
 cumret_raw = ret_scaled.cumsum()
 cumret1 = np.log(1 + pnl1).cumsum()
 cumret2 = np.log(1 + pnl2).cumsum()
@@ -242,7 +276,7 @@ if show_reg:
         )
     )
 fig.update_layout(
-    title=f"{symbol} Cumulative log return (channel breakout)",
+    title=f"{symbol} Cumulative log return (acceleration backtest)",
     xaxis_title="Date",
     yaxis_title="Cumulative log return",
     template="plotly_white",
@@ -252,7 +286,7 @@ fig.update_layout(
 fig.update_xaxes(rangeslider_visible=False)
 st.plotly_chart(fig, use_container_width=True)
 
-# Stats
+# Stats (enhanced with all metrics from SOP)
 def level_from_log(cumlog: pd.Series) -> pd.Series:
     return np.exp(cumlog) - 1
 
@@ -282,41 +316,98 @@ def alpha_beta(pnl: pd.Series, bench: pd.Series) -> tuple[float, float]:
     return alpha * TRADING_DAYS, beta
 
 
-def es95(series: pd.Series) -> float:
+def cvar95(series: pd.Series) -> float:
+    """Conditional Value at Risk (CVaR) at 95% confidence level."""
     q = series.quantile(0.05)
     return float(series[series <= q].mean()) * 100
+
+
+def cdd95(cumlog: pd.Series) -> float:
+    """Conditional Drawdown at Risk (CDD) at 95% confidence level."""
+    level = np.exp(cumlog) - 1
+    peak = level.cummax()
+    drawdown = peak - level
+    q = drawdown.quantile(0.95)
+    return float(drawdown[drawdown >= q].mean()) * 100
+
+
+def kurtosis_monthly(series: pd.Series, trading_days: int = 252) -> float:
+    """Monthly kurtosis."""
+    if len(series) > 30:
+        if isinstance(series.index, pd.DatetimeIndex):
+            monthly_ret = series.resample('M').sum()
+        else:
+            monthly_ret = series.groupby(series.index // 21).sum()
+    else:
+        monthly_ret = series
+    return float(monthly_ret.kurtosis())
+
+
+def sortino_ratio(pnl: pd.Series, risk_free_rate: float = 0.0, trading_days: int = 252) -> float:
+    """Sortino ratio: excess return / downside deviation."""
+    excess_return = pnl.mean() * trading_days - risk_free_rate
+    downside_returns = pnl[pnl < 0]
+    if len(downside_returns) == 0:
+        return np.inf if excess_return > 0 else np.nan
+    downside_std = downside_returns.std() * np.sqrt(trading_days)
+    return excess_return / downside_std if downside_std > 1e-12 else np.nan
+
+
+def hit_rate(pnl: pd.Series) -> float:
+    """Hit rate: percentage of positive returns."""
+    return float((pnl > 0).sum() / len(pnl)) * 100 if len(pnl) > 0 else np.nan
+
+
+def profit_factor(pnl: pd.Series) -> float:
+    """Profit factor: gross profit / gross loss."""
+    gross_profit = pnl[pnl > 0].sum()
+    gross_loss = abs(pnl[pnl < 0].sum())
+    return float(gross_profit / gross_loss) if gross_loss > 1e-12 else np.inf
 
 
 def annual_turnover(position: pd.Series) -> float:
     return float(position.diff().abs().mean()) * TRADING_DAYS
 
 
-def build_stats(ret_series: pd.Series, is_raw: bool) -> dict:
+def build_stats(ret_series: pd.Series, is_raw: bool, trading_days: int = 252) -> dict:
+    """Enhanced build_stats with all metrics."""
     if is_raw:
         r = ret_series
-        ann_ret = r.mean() * TRADING_DAYS * 100
-        ann_vol = r.std() * np.sqrt(TRADING_DAYS) * 100
+        ann_ret = r.mean() * trading_days * 100
+        ann_vol = r.std() * np.sqrt(trading_days) * 100
         cumlog = r.cumsum()
     else:
         r = ret_series
-        ann_ret = r.mean() * TRADING_DAYS * 100
-        ann_vol = r.std() * np.sqrt(TRADING_DAYS) * 100
+        ann_ret = r.mean() * trading_days * 100
+        ann_vol = r.std() * np.sqrt(trading_days) * 100
         cumlog = np.log(1 + r).cumsum()
+    
     sharpe = ann_ret / ann_vol if ann_vol else np.nan
+    sortino = sortino_ratio(r, trading_days=trading_days)
     max_dd = max_drawdown(cumlog)
+    cdd95_val = cdd95(cumlog)
     calmar = ann_ret / max_dd if max_dd else np.nan
     avg_dd = avg_drawdown(cumlog)
     skew = float(r.skew()) if len(r) else np.nan
-    es = es95(r)
+    kurt_mth = kurtosis_monthly(r, trading_days=trading_days)
+    cvar95_val = cvar95(r)
+    hit_rate_val = hit_rate(r)
+    profit_factor_val = profit_factor(r)
+    
     return {
         "Ann return (%)": ann_ret,
         "Ann vol (%)": ann_vol,
         "Sharpe": sharpe,
+        "Sortino": sortino,
         "Max DD (%)": max_dd,
+        "CDD95 (%)": cdd95_val,
         "Avg DD (%)": avg_dd,
         "Calmar": calmar,
         "Skewness": skew,
-        "ES95 (%)": es,
+        "Kurtosis (mth)": kurt_mth,
+        "CVaR95 (%)": cvar95_val,
+        "Hit Rate (%)": hit_rate_val,
+        "Profit Factor": profit_factor_val,
     }
 
 
@@ -344,11 +435,16 @@ rows_table = [
     ("Ann return (%)", stats_raw["Ann return (%)"], stats1["Ann return (%)"], stats2["Ann return (%)"], stats3["Ann return (%)"], stats_avg["Ann return (%)"], stats_reg["Ann return (%)"]),
     ("Ann vol (%)", stats_raw["Ann vol (%)"], stats1["Ann vol (%)"], stats2["Ann vol (%)"], stats3["Ann vol (%)"], stats_avg["Ann vol (%)"], stats_reg["Ann vol (%)"]),
     ("Sharpe", stats_raw["Sharpe"], stats1["Sharpe"], stats2["Sharpe"], stats3["Sharpe"], stats_avg["Sharpe"], stats_reg["Sharpe"]),
+    ("Sortino", stats_raw["Sortino"], stats1["Sortino"], stats2["Sortino"], stats3["Sortino"], stats_avg["Sortino"], stats_reg["Sortino"]),
     ("Max DD (%)", stats_raw["Max DD (%)"], stats1["Max DD (%)"], stats2["Max DD (%)"], stats3["Max DD (%)"], stats_avg["Max DD (%)"], stats_reg["Max DD (%)"]),
+    ("CDD95 (%)", stats_raw["CDD95 (%)"], stats1["CDD95 (%)"], stats2["CDD95 (%)"], stats3["CDD95 (%)"], stats_avg["CDD95 (%)"], stats_reg["CDD95 (%)"]),
     ("Avg DD (%)", stats_raw["Avg DD (%)"], stats1["Avg DD (%)"], stats2["Avg DD (%)"], stats3["Avg DD (%)"], stats_avg["Avg DD (%)"], stats_reg["Avg DD (%)"]),
     ("Calmar", stats_raw["Calmar"], stats1["Calmar"], stats2["Calmar"], stats3["Calmar"], stats_avg["Calmar"], stats_reg["Calmar"]),
     ("Skewness", stats_raw["Skewness"], stats1["Skewness"], stats2["Skewness"], stats3["Skewness"], stats_avg["Skewness"], stats_reg["Skewness"]),
-    ("ES95 (%)", stats_raw["ES95 (%)"], stats1["ES95 (%)"], stats2["ES95 (%)"], stats3["ES95 (%)"], stats_avg["ES95 (%)"], stats_reg["ES95 (%)"]),
+    ("Kurtosis (mth)", stats_raw["Kurtosis (mth)"], stats1["Kurtosis (mth)"], stats2["Kurtosis (mth)"], stats3["Kurtosis (mth)"], stats_avg["Kurtosis (mth)"], stats_reg["Kurtosis (mth)"]),
+    ("CVaR95 (%)", stats_raw["CVaR95 (%)"], stats1["CVaR95 (%)"], stats2["CVaR95 (%)"], stats3["CVaR95 (%)"], stats_avg["CVaR95 (%)"], stats_reg["CVaR95 (%)"]),
+    ("Hit Rate (%)", stats_raw["Hit Rate (%)"], stats1["Hit Rate (%)"], stats2["Hit Rate (%)"], stats3["Hit Rate (%)"], stats_avg["Hit Rate (%)"], stats_reg["Hit Rate (%)"]),
+    ("Profit Factor", stats_raw["Profit Factor"], stats1["Profit Factor"], stats2["Profit Factor"], stats3["Profit Factor"], stats_avg["Profit Factor"], stats_reg["Profit Factor"]),
     ("Ann turnover", turnover_raw, turnover1, turnover2, turnover3, turnover_avg, turnover_reg),
     ("Alpha vs raw (ann %)", np.nan, alpha1 * 100 if not np.isnan(alpha1) else np.nan, alpha2 * 100 if not np.isnan(alpha2) else np.nan, alpha3 * 100 if not np.isnan(alpha3) else np.nan, alpha_avg * 100 if not np.isnan(alpha_avg) else np.nan, alpha_reg * 100 if not np.isnan(alpha_reg) else np.nan),
     ("Beta vs raw", np.nan, beta1, beta2, beta3, beta_avg, beta_reg_out),
@@ -365,4 +461,4 @@ st.caption(
     f"(1d: [{beta_1d[0]:.2f},{beta_1d[1]:.2f},{beta_1d[2]:.2f}] 5d: [{beta_5d[0]:.2f},{beta_5d[1]:.2f},{beta_5d[2]:.2f}] "
     f"10d: [{beta_10d[0]:.2f},{beta_10d[1]:.2f},{beta_10d[2]:.2f}] 30d: [{beta_30d[0]:.2f},{beta_30d[1]:.2f},{beta_30d[2]:.2f}])"
 )
-st.caption("Signal: (close - (roll_high+roll_low)/2) / (roll_high - roll_low) × 3, then 2d EMA; position = vol-matched × cap.")
+st.caption("Signal: acceleration of EMA crossover (diff of standardized level), re-standardized, vol-matched × cap.")
