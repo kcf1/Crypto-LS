@@ -81,20 +81,30 @@ with st.sidebar:
         
         st.divider()
         st.markdown("**📜 Old Strategies**")
+        
+        st.markdown("**[Trend]**")
         st.page_link("pages/7_acceleration_backtest.py", label="Acceleration Backtest", icon="⚡")
         st.caption("Signal = acceleration of EMA crossover (momentum-of-momentum), standardized, vol-matched")
         st.page_link("pages/8_block_momentum_backtest.py", label="Block Momentum Backtest", icon="📊")
         st.caption("Signal = (higher high + higher low) / range over blocks, smoothed, vol-matched")
-        st.page_link("pages/16_mean_reversion_backtest.py", label="Mean Reversion Backtest", icon="🔄")
-        st.caption("Signal = -sign(momentum) when |momentum| > threshold and volume decay > threshold")
-        st.page_link("pages/17_orthogonal_alpha_backtest.py", label="Orthogonal Alpha Backtest", icon="📈")
-        st.caption("Signal = alpha orthogonal to momentum via rolling OLS, standardized, vol-matched")
-        st.page_link("pages/18_wed_thu_backtest.py", label="Wed/Thu Calendar Backtest", icon="📅")
-        st.caption("Signal = +1 on Wed, -1 on Thu, 0 otherwise; calendar effect, vol-matched")
         st.page_link("pages/19_ema_vol_backtest.py", label="EMA Vol Backtest", icon="📈")
         st.caption("Signal = EMA crossover standardized, × Weibull CDF vol tilt, × strategy decay, vol-matched")
+        
+        st.markdown("**[Breakout]**")
         st.page_link("pages/20_breakout_vol_backtest.py", label="Breakout Vol Backtest", icon="📊")
         st.caption("Signal = (price - mid) / range × 2, smoothed, × Weibull CDF vol tilt, × strategy decay, vol-matched")
+        
+        st.markdown("**[Reversal]**")
+        st.page_link("pages/16_mean_reversion_backtest.py", label="Mean Reversion Backtest", icon="🔄")
+        st.caption("Signal = -sign(momentum) when |momentum| > threshold and volume decay > threshold")
+        
+        st.markdown("**[Alpha]**")
+        st.page_link("pages/17_orthogonal_alpha_backtest.py", label="Orthogonal Alpha Backtest", icon="📈")
+        st.caption("Signal = alpha orthogonal to momentum via rolling OLS, standardized, vol-matched")
+        
+        st.markdown("**[Calendar]**")
+        st.page_link("pages/18_wed_thu_backtest.py", label="Wed/Thu Calendar Backtest", icon="📅")
+        st.caption("Signal = +1 on Wed, -1 on Thu, 0 otherwise; calendar effect, vol-matched")
 
     with st.expander("⚡ Futures Market Data (Binance)", expanded=False):
         st.page_link("pages/8_open_interest.py", label="Open Interest", icon="💹")

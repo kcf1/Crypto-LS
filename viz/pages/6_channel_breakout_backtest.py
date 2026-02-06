@@ -21,9 +21,15 @@ from sklearn.linear_model import RidgeCV
 
 from config import settings
 from data import Storage
+from viz.backtest_utils import (
+    TRADING_DAYS,
+    rescale_to_target_vol as rescale_to_target_vol_util,
+    build_stats,
+    alpha_beta,
+    annual_turnover,
+)
 
 TIMEFRAME_5M = "5m"
-TRADING_DAYS = 252
 VOL_FLOOR = 1e-8
 SIGNAL_SMOOTH_SPAN = 2  # 2d EMA on raw channel signal
 
@@ -45,7 +51,10 @@ with st.sidebar:
     db_label = "Postgres (DATABASE_URL)" if settings.database_url else f"SQLite ({settings.db_path})"
     st.caption(f"Storage: {db_label}")
 
-    st.divider()
+# Create two columns: main content (left) and controls (right)
+col_main, col_controls = st.columns([3, 1])
+
+with col_controls:
     st.subheader("Strategy 1")
     channel1 = st.slider("Channel lookback (days)", 1, 30, 20, key="channel1_cb")
     vol_look1 = st.slider("Vol-estimator lookback (days)", 5, 90, 30, key="vol1_cb")
@@ -250,82 +259,18 @@ fig.update_layout(
     showlegend=True,
 )
 fig.update_xaxes(rangeslider_visible=False)
-st.plotly_chart(fig, use_container_width=True)
+with col_main:
+    st.plotly_chart(fig, use_container_width=True)
 
-# Stats
-def level_from_log(cumlog: pd.Series) -> pd.Series:
-    return np.exp(cumlog) - 1
-
-
-def max_drawdown(cumlog: pd.Series) -> float:
-    level = level_from_log(cumlog)
-    peak = level.cummax()
-    dd = peak - level
-    return float(dd.max()) * 100
+# Stats: use shared module (simpler stats for EOD backtests)
 
 
-def avg_drawdown(cumlog: pd.Series) -> float:
-    level = level_from_log(cumlog)
-    peak = level.cummax()
-    dd = peak - level
-    return float(dd.mean()) * 100
-
-
-def alpha_beta(pnl: pd.Series, bench: pd.Series) -> tuple[float, float]:
-    m = pnl.notna() & bench.notna()
-    p = pnl[m].values
-    b = bench[m].values
-    if len(p) < 2 or b.var() == 0:
-        return np.nan, np.nan
-    beta = np.cov(p, b)[0, 1] / b.var()
-    alpha = p.mean() - beta * b.mean()
-    return alpha * TRADING_DAYS, beta
-
-
-def es95(series: pd.Series) -> float:
-    q = series.quantile(0.05)
-    return float(series[series <= q].mean()) * 100
-
-
-def annual_turnover(position: pd.Series) -> float:
-    return float(position.diff().abs().mean()) * TRADING_DAYS
-
-
-def build_stats(ret_series: pd.Series, is_raw: bool) -> dict:
-    if is_raw:
-        r = ret_series
-        ann_ret = r.mean() * TRADING_DAYS * 100
-        ann_vol = r.std() * np.sqrt(TRADING_DAYS) * 100
-        cumlog = r.cumsum()
-    else:
-        r = ret_series
-        ann_ret = r.mean() * TRADING_DAYS * 100
-        ann_vol = r.std() * np.sqrt(TRADING_DAYS) * 100
-        cumlog = np.log(1 + r).cumsum()
-    sharpe = ann_ret / ann_vol if ann_vol else np.nan
-    max_dd = max_drawdown(cumlog)
-    calmar = ann_ret / max_dd if max_dd else np.nan
-    avg_dd = avg_drawdown(cumlog)
-    skew = float(r.skew()) if len(r) else np.nan
-    es = es95(r)
-    return {
-        "Ann return (%)": ann_ret,
-        "Ann vol (%)": ann_vol,
-        "Sharpe": sharpe,
-        "Max DD (%)": max_dd,
-        "Avg DD (%)": avg_dd,
-        "Calmar": calmar,
-        "Skewness": skew,
-        "ES95 (%)": es,
-    }
-
-
-stats_raw = build_stats(ret_scaled, is_raw=True)
-stats1 = build_stats(pnl1, is_raw=False)
-stats2 = build_stats(pnl2, is_raw=False)
-stats3 = build_stats(pnl3, is_raw=False)
-stats_avg = build_stats(pnl_avg, is_raw=False)
-stats_reg = build_stats(pnl_reg, is_raw=False)
+stats_raw = build_stats(ret_scaled, is_raw=True, include_all_metrics=False)
+stats1 = build_stats(pnl1, is_raw=False, include_all_metrics=False)
+stats2 = build_stats(pnl2, is_raw=False, include_all_metrics=False)
+stats3 = build_stats(pnl3, is_raw=False, include_all_metrics=False)
+stats_avg = build_stats(pnl_avg, is_raw=False, include_all_metrics=False)
+stats_reg = build_stats(pnl_reg, is_raw=False, include_all_metrics=False)
 
 alpha1, beta1 = alpha_beta(pnl1, ret_scaled)
 alpha2, beta2 = alpha_beta(pnl2, ret_scaled)
@@ -334,11 +279,11 @@ alpha_avg, beta_avg = alpha_beta(pnl_avg, ret_scaled)
 alpha_reg, beta_reg_out = alpha_beta(pnl_reg, ret_scaled)
 
 turnover_raw = 0.0
-turnover1 = annual_turnover(pos1)
-turnover2 = annual_turnover(pos2)
-turnover3 = annual_turnover(pos3)
-turnover_avg = annual_turnover(pos_avg)
-turnover_reg = annual_turnover(pos_reg)
+turnover1 = annual_turnover(pos1, is_intraday=False)
+turnover2 = annual_turnover(pos2, is_intraday=False)
+turnover3 = annual_turnover(pos3, is_intraday=False)
+turnover_avg = annual_turnover(pos_avg, is_intraday=False)
+turnover_reg = annual_turnover(pos_reg, is_intraday=False)
 
 rows_table = [
     ("Ann return (%)", stats_raw["Ann return (%)"], stats1["Ann return (%)"], stats2["Ann return (%)"], stats3["Ann return (%)"], stats_avg["Ann return (%)"], stats_reg["Ann return (%)"]),
@@ -357,12 +302,13 @@ stats_df = pd.DataFrame(
     rows_table,
     columns=["Metric", "Raw", "Strategy 1", "Strategy 2", "Strategy 3", "Avg (1+2+3)", "Reg (β≥0)"],
 ).set_index("Metric")
-st.dataframe(stats_df.style.format("{:.2f}", na_rep="-"), use_container_width=True)
-
-st.caption(f"Total days: {len(eod)} | {eod['date'].min()} → {eod['date'].max()}")
-st.caption(
-    f"Reg (β≥0): 4 models (1d/5d/10d/30d fwd ret/vol), avg betas = [{beta_reg[0]:.3f}, {beta_reg[1]:.3f}, {beta_reg[2]:.3f}] "
-    f"(1d: [{beta_1d[0]:.2f},{beta_1d[1]:.2f},{beta_1d[2]:.2f}] 5d: [{beta_5d[0]:.2f},{beta_5d[1]:.2f},{beta_5d[2]:.2f}] "
-    f"10d: [{beta_10d[0]:.2f},{beta_10d[1]:.2f},{beta_10d[2]:.2f}] 30d: [{beta_30d[0]:.2f},{beta_30d[1]:.2f},{beta_30d[2]:.2f}])"
-)
-st.caption("Signal: (close - (roll_high+roll_low)/2) / (roll_high - roll_low) × 3, then 2d EMA; position = vol-matched × cap.")
+with col_main:
+    st.dataframe(stats_df.style.format("{:.2f}", na_rep="-"), use_container_width=True)
+    
+    st.caption(f"Total days: {len(eod)} | {eod['date'].min()} → {eod['date'].max()}")
+    st.caption(
+        f"Reg (β≥0): 4 models (1d/5d/10d/30d fwd ret/vol), avg betas = [{beta_reg[0]:.3f}, {beta_reg[1]:.3f}, {beta_reg[2]:.3f}] "
+        f"(1d: [{beta_1d[0]:.2f},{beta_1d[1]:.2f},{beta_1d[2]:.2f}] 5d: [{beta_5d[0]:.2f},{beta_5d[1]:.2f},{beta_5d[2]:.2f}] "
+        f"10d: [{beta_10d[0]:.2f},{beta_10d[1]:.2f},{beta_10d[2]:.2f}] 30d: [{beta_30d[0]:.2f},{beta_30d[1]:.2f},{beta_30d[2]:.2f}])"
+    )
+    st.caption("Signal: (close - (roll_high+roll_low)/2) / (roll_high - roll_low) × 3, then 2d EMA; position = vol-matched × cap.")

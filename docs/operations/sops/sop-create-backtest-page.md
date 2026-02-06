@@ -48,11 +48,22 @@ import streamlit as st
 
 from config import settings
 from data import Storage
+from viz.backtest_utils import (
+    TRADING_DAYS,
+    TRADING_HOURS_PER_YEAR,
+    VOL_FLOOR,
+    prepare_daily_stats_series,
+    rescale_to_target_vol as rescale_to_target_vol_util,
+    build_stats,
+    alpha_beta,
+    annual_turnover,
+)
 
-# Constants
+# Constants (if page-specific, otherwise use from utils)
 TIMEFRAME_5M = "5m"
-TRADING_DAYS = 252
-VOL_FLOOR = 1e-8
+# Note: TRADING_DAYS, TRADING_HOURS_PER_YEAR, VOL_FLOOR are imported from viz.backtest_utils
+# Use TRADING_DAYS for annualization in statistics (after resampling to daily)
+# Use TRADING_HOURS_PER_YEAR only for intraday position sizing and volatility calculations
 
 # Page title and caption
 st.title("[Strategy Name] backtest")
@@ -63,70 +74,73 @@ st.caption("[Brief description of signal logic and position calculation]")
 
 ---
 
-## Step 2: Set Up Sidebar Controls
+## Step 2: Set Up Layout and Controls
 
-### 2.1 Standard Sidebar Components
+### 2.1 Layout: Left Sidebar + Main Area with Right Controls
 
-Every backtest page should include:
+**Sliders and strategy controls go on the right** of the main content area, not in the left sidebar. Use this layout:
+
+- **Left sidebar (`st.sidebar`)**: Symbol selector and database label only.
+- **Main area**: Two columns — **left column (`col_main`)** for charts and statistics table, **right column (`col_controls`)** for all sliders and display toggles.
 
 ```python
 storage = Storage()
 symbols = settings.symbols
 
+# Left sidebar: symbol and storage info only
 with st.sidebar:
-    # Symbol selector
     symbol = st.selectbox(
         "Symbol",
         symbols,
         index=0,
         help="Symbol (from settings.symbols).",
     )
-    
-    # Database label (informational)
     db_label = "Postgres (DATABASE_URL)" if settings.database_url else f"SQLite ({settings.db_path})"
     st.caption(f"Storage: {db_label}")
-    
-    st.divider()
-    
-    # Strategy parameter sections (see 2.2)
-    # Display toggles (see 2.3)
+
+# Main area: wide left column (content) + narrow right column (controls)
+col_main, col_controls = st.columns([3, 1])
 ```
 
-### 2.2 Strategy Parameter Sections
+**Important**: All strategy parameter sliders and display checkboxes must be placed inside `with col_controls:` so they appear on the **right**. All charts (`st.plotly_chart`) and the statistics table (`st.dataframe`) must be placed inside `with col_main:`.
 
-**Pattern**: Create 3 strategy variants with independent parameters
+### 2.2 Strategy Parameter Sections (Right Column)
+
+**Pattern**: Create 3 strategy variants with independent parameters. Place all of these inside `with col_controls:`.
 
 ```python
-st.subheader("Strategy 1")
-param1_1 = st.slider("Parameter 1", min_val, max_val, default_val, step, key="param1_1")
-param1_2 = st.slider("Parameter 2", min_val, max_val, default_val, step, key="param1_2")
-# ... more parameters
+with col_controls:
+    st.subheader("Strategy 1")
+    param1_1 = st.slider("Parameter 1", min_val, max_val, default_val, step, key="param1_1")
+    param1_2 = st.slider("Parameter 2", min_val, max_val, default_val, step, key="param1_2")
+    # ... more parameters
 
-st.subheader("Strategy 2")
-param2_1 = st.slider("Parameter 1", min_val, max_val, default_val, step, key="param2_1")
-# ... (use unique keys: param2_*, param3_*)
+    st.subheader("Strategy 2")
+    param2_1 = st.slider("Parameter 1", min_val, max_val, default_val, step, key="param2_1")
+    # ... (use unique keys: param2_*, param3_*)
 
-st.subheader("Strategy 3")
-param3_1 = st.slider("Parameter 1", min_val, max_val, default_val, step, key="param3_1")
-# ...
+    st.subheader("Strategy 3")
+    param3_1 = st.slider("Parameter 1", min_val, max_val, default_val, step, key="param3_1")
+    # ...
 
-st.divider()
-# Shared parameters (e.g., target vol)
-target_vol = st.slider("Target vol (ann) — all series", 0.05, 0.50, 0.15, 0.01, key="target_vol")
+    st.divider()
+    target_vol = st.slider("Target vol (ann) — all series", 0.05, 0.50, 0.15, 0.01, key="target_vol")
 ```
 
 **Key Naming Convention**: Use unique keys for each slider to avoid conflicts (e.g., `fast1`, `fast2`, `fast3` or `channel1_cb`, `channel2_cb`).
 
-### 2.3 Display Toggles
+### 2.3 Display Toggles (Right Column)
+
+Place display toggles in the same right column, still inside `with col_controls:`:
 
 ```python
-st.divider()
-show_raw = st.checkbox("Show Raw", value=True, key="show_raw_[suffix]")
-show_s1 = st.checkbox("Show Strategy 1", value=True, key="show_s1_[suffix]")
-show_s2 = st.checkbox("Show Strategy 2", value=True, key="show_s2_[suffix]")
-show_s3 = st.checkbox("Show Strategy 3", value=True, key="show_s3_[suffix]")
-show_avg = st.checkbox("Show Avg (1+2+3)", value=True, key="show_avg_[suffix]")
-show_reg = st.checkbox("Show Reg (β≥0)", value=True, key="show_reg_[suffix]")
+    st.divider()
+    show_raw = st.checkbox("Show Raw", value=True, key="show_raw_[suffix]")
+    show_s1 = st.checkbox("Show Strategy 1", value=True, key="show_s1_[suffix]")
+    show_s2 = st.checkbox("Show Strategy 2", value=True, key="show_s2_[suffix]")
+    show_s3 = st.checkbox("Show Strategy 3", value=True, key="show_s3_[suffix]")
+    show_avg = st.checkbox("Show Avg (1+2+3)", value=True, key="show_avg_[suffix]")
+    show_reg = st.checkbox("Show Reg (β≥0)", value=True, key="show_reg_[suffix]")
 ```
 
 **Note**: Use unique suffix in keys (e.g., `_tf` for trend-following, `_cb` for channel-breakout) to avoid conflicts when switching pages.
@@ -149,6 +163,8 @@ if not rows:
 
 ### 3.2 Convert to EOD (End-of-Day) Data
 
+**For EOD-based strategies**:
+
 ```python
 df = pd.DataFrame(
     rows,
@@ -169,6 +185,46 @@ eod = eod.dropna(subset=["ret"]).reset_index(drop=True)
 close = eod["close"]
 ret = eod["ret"]
 dates = eod["date"]
+```
+
+### 3.3 Convert to Intraday Bars (e.g., Hourly from 5m)
+
+**For intraday-based strategies** (e.g., hourly bars from 5m data):
+
+```python
+df_5m = pd.DataFrame(
+    rows,
+    columns=["open_time", "open", "high", "low", "close", "volume", "close_time"],
+)
+df_5m["datetime"] = pd.to_datetime(df_5m["open_time"], unit="ms")
+df_5m = df_5m.sort_values("datetime").reset_index(drop=True)
+
+# Aggregate 5m to hourly bars
+df_5m["hour"] = df_5m["datetime"].dt.floor("H")
+hourly = df_5m.groupby("hour", as_index=False).agg(
+    open=("open", "first"),
+    high=("high", "max"),
+    low=("low", "min"),
+    close=("close", "last"),
+    volume=("volume", "sum"),
+)
+hourly = hourly.sort_values("hour").reset_index(drop=True)
+hourly["datetime"] = hourly["hour"]
+
+# Calculate log returns (hourly)
+hourly["ret"] = np.log(hourly["close"] / hourly["close"].shift(1))
+hourly = hourly.dropna(subset=["ret"]).reset_index(drop=True)
+
+# Extract series for calculations
+close = hourly["close"]
+ret = hourly["ret"]
+dates = hourly["datetime"]
+high = hourly["high"]
+low = hourly["low"]
+open_price = hourly["open"]
+
+# Note: PnL will be calculated at hourly frequency, but MUST be resampled to daily
+# before statistics (see Step 9.0)
 ```
 
 ---
@@ -289,23 +345,24 @@ pnl_reg = pnl_reg.fillna(0)
 
 ### 6.1 Rescaling Function
 
+**Important**: Use the shared `rescale_to_target_vol` function from `viz.backtest_utils`. Do not define this function locally.
+
 ```python
-target_vol_daily = target_vol / np.sqrt(TRADING_DAYS)
+# For EOD (daily) data:
+ret_scaled, _ = rescale_to_target_vol_util(ret, None, target_vol, is_intraday=False)
+pnl1, pos1 = rescale_to_target_vol_util(pnl1, pos1, target_vol, is_intraday=False)
+pnl2, pos2 = rescale_to_target_vol_util(pnl2, pos2, target_vol, is_intraday=False)
+pnl3, pos3 = rescale_to_target_vol_util(pnl3, pos3, target_vol, is_intraday=False)
+pnl_avg, pos_avg = rescale_to_target_vol_util(pnl_avg, pos_avg, target_vol, is_intraday=False)
+pnl_reg, pos_reg = rescale_to_target_vol_util(pnl_reg, pos_reg, target_vol, is_intraday=False)
 
-def rescale_to_target_vol(pnl_series: pd.Series, pos_series: pd.Series = None) -> tuple:
-    sd = pnl_series.std()
-    scale = target_vol_daily / sd if sd > 1e-12 else 1.0
-    pnl_scaled = pnl_series * scale
-    pos_scaled = pos_series * scale if pos_series is not None else None
-    return pnl_scaled, pos_scaled
-
-ret_scaled, _ = rescale_to_target_vol(ret, None)
-pnl1, pos1 = rescale_to_target_vol(pnl1, pos1)
-pnl2, pos2 = rescale_to_target_vol(pnl2, pos2)
-pnl3, pos3 = rescale_to_target_vol(pnl3, pos3)
-pnl_avg, pos_avg = rescale_to_target_vol(pnl_avg, pos_avg)
-pnl_reg, pos_reg = rescale_to_target_vol(pnl_reg, pos_reg)
+# For intraday (hourly) data:
+ret_scaled, _ = rescale_to_target_vol_util(ret, None, target_vol, is_intraday=True)
+pnl1, pos1 = rescale_to_target_vol_util(pnl1, pos1, target_vol, is_intraday=True)
+# ... (same pattern, but with is_intraday=True)
 ```
+
+**Note**: The `rescale_to_target_vol_util` function automatically handles the correct volatility scaling based on the `is_intraday` parameter.
 
 ---
 
@@ -365,181 +422,114 @@ fig.update_layout(
     showlegend=True,
 )
 fig.update_xaxes(rangeslider_visible=False)
-st.plotly_chart(fig, use_container_width=True)
+with col_main:
+    st.plotly_chart(fig, use_container_width=True)
 ```
+
+**Note**: The chart is placed inside `with col_main:` so it appears on the **left**; sliders remain on the right.
 
 ---
 
 ## Step 9: Statistics Table
 
-### 9.1 Helper Functions
+### 9.0 Resample Intraday Data to Daily (if applicable)
+
+**Important**: For all intraday series (e.g., 5m, 1h data), you must resample PnL to daily frequency before calculating statistics. This ensures meaningful annualized metrics and avoids inflated Sharpe ratios from high-frequency data.
+
+**Use the shared `prepare_daily_stats_series` function from `viz.backtest_utils`**:
 
 ```python
-def level_from_log(cumlog: pd.Series) -> pd.Series:
-    return np.exp(cumlog) - 1
-
-def max_drawdown(cumlog: pd.Series) -> float:
-    level = level_from_log(cumlog)
-    peak = level.cummax()
-    dd = peak - level
-    return float(dd.max()) * 100
-
-def avg_drawdown(cumlog: pd.Series) -> float:
-    level = level_from_log(cumlog)
-    peak = level.cummax()
-    dd = peak - level
-    return float(dd.mean()) * 100
-
-def alpha_beta(pnl: pd.Series, bench: pd.Series) -> tuple[float, float]:
-    m = pnl.notna() & bench.notna()
-    p = pnl[m].values
-    b = bench[m].values
-    if len(p) < 2 or b.var() == 0:
-        return np.nan, np.nan
-    beta = np.cov(p, b)[0, 1] / b.var()
-    alpha = p.mean() - beta * b.mean()
-    return alpha * TRADING_DAYS, beta
-
-def es95(series: pd.Series) -> float:
-    """Expected Shortfall (ES) at 95% - same as CVaR95."""
-    q = series.quantile(0.05)
-    return float(series[series <= q].mean()) * 100
-
-def cvar95(series: pd.Series) -> float:
-    """
-    Conditional Value at Risk (CVaR) at 95% confidence level.
-    Also known as Expected Shortfall (ES). Returns the expected loss given that loss exceeds the 95% VaR threshold.
-    Note: This is equivalent to es95() above.
-    """
-    q = series.quantile(0.05)
-    return float(series[series <= q].mean()) * 100
-
-def cdd95(cumlog: pd.Series) -> float:
-    """
-    Conditional Drawdown at Risk (CDD) at 95% confidence level.
-    Expected drawdown given that drawdown exceeds the 95% threshold.
-    """
-    level = np.exp(cumlog) - 1
-    peak = level.cummax()
-    drawdown = peak - level
-    q = drawdown.quantile(0.95)
-    return float(drawdown[drawdown >= q].mean()) * 100
-
-def kurtosis_monthly(series: pd.Series, trading_days: int = 252) -> float:
-    """
-    Monthly kurtosis.
-    Aggregates daily returns to monthly, then calculates kurtosis.
-    """
-    # Resample to monthly (assuming daily data)
-    # If data is already monthly, use directly
-    if len(series) > 30:  # Likely daily data
-        # Group by month if datetime index, otherwise group by ~21 day chunks
-        if isinstance(series.index, pd.DatetimeIndex):
-            monthly_ret = series.resample('M').sum()
-        else:
-            # For integer index, group by ~21 day periods (approximate month)
-            monthly_ret = series.groupby(series.index // 21).sum()
-    else:
-        monthly_ret = series
-    
-    return float(monthly_ret.kurtosis())
-
-def sortino_ratio(pnl: pd.Series, risk_free_rate: float = 0.0, trading_days: int = 252) -> float:
-    """
-    Sortino ratio: excess return / downside deviation.
-    Uses only negative returns for volatility calculation.
-    """
-    excess_return = pnl.mean() * trading_days - risk_free_rate
-    downside_returns = pnl[pnl < 0]
-    if len(downside_returns) == 0:
-        return np.inf if excess_return > 0 else np.nan
-    downside_std = downside_returns.std() * np.sqrt(trading_days)
-    return excess_return / downside_std if downside_std > 1e-12 else np.nan
-
-def hit_rate(pnl: pd.Series) -> float:
-    """
-    Hit rate: percentage of positive returns.
-    """
-    return float((pnl > 0).sum() / len(pnl)) * 100 if len(pnl) > 0 else np.nan
-
-def profit_factor(pnl: pd.Series) -> float:
-    """
-    Profit factor: gross profit / gross loss.
-    Ratio of sum of positive returns to absolute sum of negative returns.
-    """
-    gross_profit = pnl[pnl > 0].sum()
-    gross_loss = abs(pnl[pnl < 0].sum())
-    return float(gross_profit / gross_loss) if gross_loss > 1e-12 else np.inf
-
-def annual_turnover(position: pd.Series) -> float:
-    return float(position.diff().abs().mean()) * TRADING_DAYS
-
-def build_stats(ret_series: pd.Series, is_raw: bool, trading_days: int = 252) -> dict:
-    """
-    Enhanced build_stats with all metrics including CVaR95, CDD95, Sortino, Kurtosis, Hit Rate, and Profit Factor.
-    """
-    if is_raw:
-        r = ret_series
-        ann_ret = r.mean() * trading_days * 100
-        ann_vol = r.std() * np.sqrt(trading_days) * 100
-        cumlog = r.cumsum()
-    else:
-        r = ret_series
-        ann_ret = r.mean() * trading_days * 100
-        ann_vol = r.std() * np.sqrt(trading_days) * 100
-        cumlog = np.log(1 + r).cumsum()
-    
-    sharpe = ann_ret / ann_vol if ann_vol else np.nan
-    sortino = sortino_ratio(r, trading_days=trading_days)
-    max_dd = max_drawdown(cumlog)
-    cdd95_val = cdd95(cumlog)
-    calmar = ann_ret / max_dd if max_dd else np.nan
-    avg_dd = avg_drawdown(cumlog)
-    skew = float(r.skew()) if len(r) else np.nan
-    kurt_mth = kurtosis_monthly(r, trading_days=trading_days)
-    cvar95_val = cvar95(r)
-    hit_rate_val = hit_rate(r)
-    profit_factor_val = profit_factor(r)
-    
-    return {
-        "Ann return (%)": ann_ret,
-        "Ann vol (%)": ann_vol,
-        "Sharpe": sharpe,
-        "Sortino": sortino,
-        "Max DD (%)": max_dd,
-        "CDD95 (%)": cdd95_val,
-        "Avg DD (%)": avg_dd,
-        "Calmar": calmar,
-        "Skewness": skew,
-        "Kurtosis (mth)": kurt_mth,
-        "CVaR95 (%)": cvar95_val,
-        "Hit Rate (%)": hit_rate_val,
-        "Profit Factor": profit_factor_val,
-    }
+# Prepare daily series for statistics (resample if intraday)
+pnl1_for_stats, pnl2_for_stats, pnl3_for_stats, pnl_avg_for_stats, pnl_reg_for_stats, ret_scaled_for_stats = prepare_daily_stats_series(
+    pnl1, pnl2, pnl3, pnl_avg, pnl_reg, ret_scaled, dates
+)
 ```
+
+This function automatically:
+- Detects if data is intraday (checks length > 252 or datetime type)
+- Resamples intraday PnL to daily by summing PnL within each day
+- Returns daily series ready for statistics calculation
+- For EOD data, returns series as-is (no resampling needed)
+
+**Note**: 
+- For EOD (end-of-day) data, the function will skip resampling automatically
+- For intraday data (5m aggregated to hourly, or any sub-daily frequency), always use this function
+- The resampling sums PnL within each day (not averaging), as PnL is additive
+- Statistics are then calculated on daily PnL and annualized using `TRADING_DAYS = 252`
+
+### 9.1 Helper Functions
+
+**Important**: **DO NOT define these functions locally**. All statistics helper functions are available in `viz.backtest_utils` and should be imported and used directly.
+
+**Available functions in `viz.backtest_utils`**:
+- `build_stats()` - Main statistics builder (supports full and simplified metrics)
+- `alpha_beta()` - Calculate alpha and beta vs benchmark
+- `annual_turnover()` - Calculate annual turnover
+- `max_drawdown()`, `avg_drawdown()`, `cvar95()`, `cdd95()`, `kurtosis_monthly()`, `sortino_ratio()`, `hit_rate()`, `profit_factor()` - Individual metric functions
+
+**Usage**:
+```python
+# For pages with full metrics (hourly backtests):
+stats_raw = build_stats(ret_scaled_for_stats, is_raw=True)
+stats1 = build_stats(pnl1_for_stats, is_raw=False)
+# ... etc
+
+# For pages with simplified metrics (EOD backtests):
+stats_raw = build_stats(ret_scaled_for_stats, is_raw=True, include_all_metrics=False)
+stats1 = build_stats(pnl1_for_stats, is_raw=False, include_all_metrics=False)
+# ... etc
+
+# Alpha/Beta:
+alpha1, beta1 = alpha_beta(pnl1_for_stats, ret_scaled_for_stats)
+
+# Turnover (specify is_intraday parameter):
+turnover1 = annual_turnover(pos1, is_intraday=False)  # For EOD data
+turnover1 = annual_turnover(pos1, is_intraday=True)    # For hourly data
+```
+
+**If you need a function that doesn't exist in utils**:
+1. Check if it's truly page-specific (only used in one page) → define locally
+2. If it's common/shared functionality → add it to `viz/backtest_utils.py` first, then import and use it
+3. Never duplicate common functions across multiple pages
 
 ### 9.2 Build Statistics Table
 
+**Important**: Use the resampled daily series (`*_for_stats`) for all statistics calculations if you resampled in Step 9.0.
+
 ```python
-stats_raw = build_stats(ret_scaled, is_raw=True)
-stats1 = build_stats(pnl1, is_raw=False)
-stats2 = build_stats(pnl2, is_raw=False)
-stats3 = build_stats(pnl3, is_raw=False)
-stats_avg = build_stats(pnl_avg, is_raw=False)
-stats_reg = build_stats(pnl_reg, is_raw=False)
+# Use daily resampled series if applicable (from Step 9.0)
+# For hourly backtests (full metrics):
+stats_raw = build_stats(ret_scaled_for_stats, is_raw=True)
+stats1 = build_stats(pnl1_for_stats, is_raw=False)
+stats2 = build_stats(pnl2_for_stats, is_raw=False)
+stats3 = build_stats(pnl3_for_stats, is_raw=False)
+stats_avg = build_stats(pnl_avg_for_stats, is_raw=False)
+stats_reg = build_stats(pnl_reg_for_stats, is_raw=False)
 
-alpha1, beta1 = alpha_beta(pnl1, ret_scaled)
-alpha2, beta2 = alpha_beta(pnl2, ret_scaled)
-alpha3, beta3 = alpha_beta(pnl3, ret_scaled)
-alpha_avg, beta_avg = alpha_beta(pnl_avg, ret_scaled)
-alpha_reg, beta_reg_out = alpha_beta(pnl_reg, ret_scaled)
+# For EOD backtests (simplified metrics):
+stats_raw = build_stats(ret_scaled_for_stats, is_raw=True, include_all_metrics=False)
+stats1 = build_stats(pnl1_for_stats, is_raw=False, include_all_metrics=False)
+# ... etc
 
+# Alpha/Beta calculations also use daily series
+alpha1, beta1 = alpha_beta(pnl1_for_stats, ret_scaled_for_stats)
+alpha2, beta2 = alpha_beta(pnl2_for_stats, ret_scaled_for_stats)
+alpha3, beta3 = alpha_beta(pnl3_for_stats, ret_scaled_for_stats)
+alpha_avg, beta_avg = alpha_beta(pnl_avg_for_stats, ret_scaled_for_stats)
+alpha_reg, beta_reg_out = alpha_beta(pnl_reg_for_stats, ret_scaled_for_stats)
+
+# Turnover: Use original position series (not resampled)
+# Specify is_intraday parameter based on your data frequency
 turnover_raw = 0.0
-turnover1 = annual_turnover(pos1)
-turnover2 = annual_turnover(pos2)
-turnover3 = annual_turnover(pos3)
-turnover_avg = annual_turnover(pos_avg)
-turnover_reg = annual_turnover(pos_reg)
+turnover1 = annual_turnover(pos1, is_intraday=False)  # For EOD data
+turnover2 = annual_turnover(pos2, is_intraday=False)
+turnover3 = annual_turnover(pos3, is_intraday=False)
+turnover_avg = annual_turnover(pos_avg, is_intraday=False)
+turnover_reg = annual_turnover(pos_reg, is_intraday=False)
+
+# For hourly data:
+# turnover1 = annual_turnover(pos1, is_intraday=True)
+# ... etc
 
 rows_table = [
     ("Ann return (%)", stats_raw["Ann return (%)"], stats1["Ann return (%)"], stats2["Ann return (%)"], stats3["Ann return (%)"], stats_avg["Ann return (%)"], stats_reg["Ann return (%)"]),
@@ -565,14 +555,18 @@ stats_df = pd.DataFrame(
     columns=["Metric", "Raw", "Strategy 1", "Strategy 2", "Strategy 3", "Avg (1+2+3)", "Reg (β≥0)"],
 ).set_index("Metric")
 
-st.dataframe(stats_df.style.format("{:.2f}", na_rep="-"), use_container_width=True)
+with col_main:
+    st.dataframe(stats_df.style.format("{:.2f}", na_rep="-"), use_container_width=True)
 ```
+
+**Note**: The statistics table is placed inside `with col_main:` so it appears on the left with the chart; sliders stay on the right.
 
 ### 9.3 Captions
 
 ```python
-st.caption(f"Total days: {len(eod)} | {eod['date'].min()} → {eod['date'].max()}")
-st.caption(f"[Additional strategy-specific information]")
+with col_main:
+    st.caption(f"Total days: {len(eod)} | {eod['date'].min()} → {eod['date'].max()}")
+    st.caption(f"[Additional strategy-specific information]")
 ```
 
 ---
@@ -683,12 +677,61 @@ st.slider("Fast lookback", key="fast1")  # Conflict!
 ```
 
 ### Pattern 5: Consistent Constants
-Use shared constants at the top:
+Import shared constants from `viz.backtest_utils`:
 ```python
-TIMEFRAME_5M = "5m"
-TRADING_DAYS = 252
-VOL_FLOOR = 1e-8
+from viz.backtest_utils import TRADING_DAYS, TRADING_HOURS_PER_YEAR, VOL_FLOOR
+
+TIMEFRAME_5M = "5m"  # Page-specific constant
+# Use TRADING_DAYS, TRADING_HOURS_PER_YEAR, VOL_FLOOR from utils
 ```
+
+### Pattern 7: Use Shared Utils Module
+**Always use functions from `viz.backtest_utils` for common operations**:
+
+1. **Import common functions**:
+   ```python
+   from viz.backtest_utils import (
+       TRADING_DAYS,
+       TRADING_HOURS_PER_YEAR,
+       VOL_FLOOR,
+       prepare_daily_stats_series,
+       rescale_to_target_vol as rescale_to_target_vol_util,
+       build_stats,
+       alpha_beta,
+       annual_turnover,
+   )
+   ```
+
+2. **Use utils functions instead of defining locally**:
+   - ✅ **DO**: `pnl1_for_stats, ... = prepare_daily_stats_series(...)`
+   - ❌ **DON'T**: Define `resample_pnl_to_daily()` locally
+   - ✅ **DO**: `ret_scaled, _ = rescale_to_target_vol_util(ret, None, target_vol, is_intraday=False)`
+   - ❌ **DON'T**: Define `rescale_to_target_vol()` locally
+   - ✅ **DO**: `stats1 = build_stats(pnl1_for_stats, is_raw=False)`
+   - ❌ **DON'T**: Define `build_stats()`, `max_drawdown()`, `alpha_beta()`, etc. locally
+
+3. **If a function doesn't exist in utils**:
+   - **Is it page-specific?** (only used in one page) → Define locally
+   - **Is it common/shared?** (used in multiple pages or likely to be reused) → **Add to `viz/backtest_utils.py` first**, then import and use it
+
+4. **Never duplicate common functions** across multiple pages. This ensures:
+   - Consistency across all backtest pages
+   - Single source of truth for bug fixes
+   - Easier maintenance and updates
+
+### Pattern 6: Resample Intraday to Daily Before Statistics
+For all intraday data (5m, hourly, etc.), always resample PnL to daily before calculating statistics using `prepare_daily_stats_series()`:
+```python
+# After calculating hourly PnL from 5m data
+pnl1_for_stats, pnl2_for_stats, ..., ret_scaled_for_stats = prepare_daily_stats_series(
+    pnl1, pnl2, pnl3, pnl_avg, pnl_reg, ret_scaled, dates
+)
+stats1 = build_stats(pnl1_for_stats, is_raw=False)  # Use daily series
+```
+This ensures:
+- Meaningful annualized metrics (not inflated by high frequency)
+- Consistent comparison across different timeframes
+- Proper Sharpe/Sortino ratios (annualized from daily, not intraday)
 
 ---
 
@@ -734,6 +777,23 @@ See `viz/pages/3_vol_target_backtest.py` for a simpler example without regressio
 
 ## Changelog
 
+- **2025-02-06**: Documented layout: sliders on the right.
+  - Step 2 renamed to "Set Up Layout and Controls"; added 2.1 "Layout: Left Sidebar + Main Area with Right Controls".
+  - Sliders and display toggles go in `col_controls` (right column); charts and stats table go in `col_main` (left).
+  - Left sidebar contains only symbol selector and database label.
+  - Step 8 and Step 9.2/9.3 updated to show `with col_main:` for chart and dataframe/captions.
+- **2025-02-06**: Added requirement to use shared `viz.backtest_utils` module:
+  - Updated Step 1 to import common functions from `viz.backtest_utils`
+  - Updated Step 6 to use `rescale_to_target_vol_util()` instead of local function
+  - Updated Step 9.0 to use `prepare_daily_stats_series()` instead of local `resample_pnl_to_daily()`
+  - Updated Step 9.1 to remove local function definitions and use utils functions
+  - Added Pattern 7: Use Shared Utils Module with guidance on when to add functions to utils
+  - Updated Pattern 5 and Pattern 6 to reference utils module
+- **2025-02-06**: Added requirement to resample intraday data to daily before statistics:
+  - Added `prepare_daily_stats_series()` function for intraday → daily aggregation
+  - Updated `build_stats()` and helper functions to expect daily data
+  - Added Step 9.0 with resampling instructions
+  - Updated statistics calculation to use daily resampled series
 - **2025-02-06**: Added additional statistics metrics:
   - Sortino ratio (downside deviation-based Sharpe)
   - CDD95 (Conditional Drawdown at Risk)
