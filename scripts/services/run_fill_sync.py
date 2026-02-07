@@ -1,8 +1,14 @@
 """Fill sync service: periodically syncs fills from Binance and books them."""
 
+import sys
 import time
 import logging
+from pathlib import Path
 from typing import Dict, Optional
+
+# Add project root to path
+if str(Path(__file__).resolve().parent.parent.parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from booking.ledger import Ledger
 from config import settings
@@ -36,7 +42,7 @@ def main() -> None:
     
     # Configuration
     sync_interval_sec = 60  # Sync every 1 minute (configurable)
-    book_id = "default"  # Default book ID
+    # Note: book_id is no longer needed - sync is order-driven and works across all books
     
     # Track last sync time per symbol (in-memory, resets on restart)
     last_sync_times: Dict[str, int] = {}
@@ -44,7 +50,7 @@ def main() -> None:
     # Sleep until aligned minute mark
     _sleep_until_next_aligned_minute(sync_interval_sec)
     
-    logger.info(f"Fill sync service started. Interval: {sync_interval_sec}s, Book ID: {book_id}")
+    logger.info(f"Fill sync service started. Interval: {sync_interval_sec}s (order-driven sync across all books)")
     
     while True:
         try:
@@ -64,22 +70,20 @@ def main() -> None:
                     # Get last sync time for this symbol
                     since = last_sync_times.get(symbol)
                     
-                    # Sync fills for symbol
+                    # Sync fills for symbol (order-driven: finds unfilled orders and syncs their fills)
+                    # book_id=None means sync for all books
                     trade_ids = orchestrator.sync_fills_for_symbol(
                         symbol=symbol,
-                        book_id=book_id,
+                        book_id=None,  # Sync for all books (order-driven approach finds orders across books)
                         since=since,
-                        limit=100,  # Fetch up to 100 trades per sync
+                        limit=100,  # Fetch up to 100 trades per order
                     )
                     
                     if trade_ids:
-                        logger.info(f"Synced {len(trade_ids)} fills for {symbol}")
+                        logger.info(f"Synced {len(trade_ids)} new fills for {symbol}")
                         total_trades_synced += len(trade_ids)
-                        # Update last sync time to latest trade time
-                        # Get latest trade time from ledger
-                        trades = ledger.get_trades(symbol=symbol, book_id=book_id, limit=1)
-                        if trades:
-                            last_sync_times[symbol] = trades[0]["traded_at"]
+                        # Update last sync time to current time
+                        last_sync_times[symbol] = int(time.time() * 1000)
                     else:
                         # Update last sync time to current time if no new trades
                         if since is None:

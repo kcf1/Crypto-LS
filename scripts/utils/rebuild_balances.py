@@ -1,4 +1,4 @@
-"""Rebuild balances table from trades table."""
+"""Rebuild balances table from trades and balance-affecting adjustments."""
 
 import argparse
 import logging
@@ -9,9 +9,9 @@ from typing import Optional
 if str(Path(__file__).resolve().parent.parent.parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from booking.ledger import Ledger, _parse_symbol
+from booking.ledger import Ledger, _parse_symbol, _is_postgres
 from config import settings
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,7 +21,10 @@ logger = logging.getLogger(__name__)
 
 
 def rebuild_balances(ledger: Ledger, book_id: Optional[str] = None) -> None:
-    """Rebuild balances table from trades.
+    """Rebuild balances table from trades and VALID balance_delta/balance adjustments.
+    
+    Order: (1) compute from trades, (2) apply balance_delta (inject/withdraw), (3) apply balance (set absolute).
+    So initial injections in adjustments are preserved after rebuild.
     
     Args:
         ledger: Ledger instance
@@ -29,7 +32,7 @@ def rebuild_balances(ledger: Ledger, book_id: Optional[str] = None) -> None:
     """
     logger.info(f"Starting balances rebuild{' for book_id=' + book_id if book_id else ''}")
     
-    is_postgres = ledger._is_postgres(str(ledger._engine.url))
+    is_postgres = _is_postgres(str(ledger._engine.url))
     
     with ledger._engine.connect() as conn:
         # Delete existing balances (filtered by book_id if provided)
@@ -49,7 +52,7 @@ def rebuild_balances(ledger: Ledger, book_id: Optional[str] = None) -> None:
                 text("""
                     SELECT venue, book_id, symbol, side, quantity, price, commission, traded_at
                     FROM trades
-                    WHERE book_id = :book_id
+                    WHERE book_id = :book_id AND record_status = 'VALID'
                     ORDER BY traded_at ASC
                 """),
                 {"book_id": book_id},
@@ -59,6 +62,7 @@ def rebuild_balances(ledger: Ledger, book_id: Optional[str] = None) -> None:
                 text("""
                     SELECT venue, book_id, symbol, side, quantity, price, commission, traded_at
                     FROM trades
+                    WHERE record_status = 'VALID'
                     ORDER BY traded_at ASC
                 """),
             )
@@ -117,6 +121,44 @@ def rebuild_balances(ledger: Ledger, book_id: Optional[str] = None) -> None:
                 balances[key_comm]["free"] -= commission
                 balances[key_comm]["updated_at"] = max(balances[key_comm]["updated_at"], traded_at)
         
+        # Apply VALID adjustments that affect balances (inject/withdraw and absolute balance sets)
+        if book_id:
+            adj_result = conn.execute(
+                text("""
+                    SELECT venue, book_id, type, asset_or_symbol, delta_or_value, created_at
+                    FROM adjustments
+                    WHERE book_id = :book_id AND record_status = 'VALID'
+                      AND LOWER(TRIM(type)) IN ('balance_delta', 'balance')
+                    ORDER BY created_at ASC
+                """),
+                {"book_id": book_id},
+            )
+        else:
+            adj_result = conn.execute(
+                text("""
+                    SELECT venue, book_id, type, asset_or_symbol, delta_or_value, created_at
+                    FROM adjustments
+                    WHERE record_status = 'VALID'
+                      AND LOWER(TRIM(type)) IN ('balance_delta', 'balance')
+                    ORDER BY created_at ASC
+                """),
+            )
+        adjustments = adj_result.fetchall()
+        logger.info(f"Applying {len(adjustments)} balance-affecting adjustments")
+        for adj in adjustments:
+            venue_a, book_id_a, type_a, asset_a, delta_or_value, created_at_a = adj
+            if book_id and book_id_a != book_id:
+                continue
+            key = (venue_a, book_id_a, asset_a)
+            type_lower = (type_a or "").strip().lower()
+            if key not in balances:
+                balances[key] = {"free": 0.0, "locked": 0.0, "updated_at": created_at_a}
+            if type_lower == "balance_delta":
+                balances[key]["free"] += float(delta_or_value)
+            else:  # balance
+                balances[key]["free"] = float(delta_or_value)
+            balances[key]["updated_at"] = max(balances[key]["updated_at"], created_at_a)
+        
         # Insert/update balances
         balances_inserted = 0
         for (venue, book_id_val, asset), balance_data in balances.items():
@@ -171,7 +213,9 @@ def rebuild_balances(ledger: Ledger, book_id: Optional[str] = None) -> None:
 
 def main() -> None:
     """Main entry point."""
-    parser = argparse.ArgumentParser(description="Rebuild balances table from trades")
+    parser = argparse.ArgumentParser(
+        description="Rebuild balances from trades and balance_delta/balance adjustments"
+    )
     parser.add_argument(
         "--book-id",
         type=str,

@@ -36,15 +36,16 @@ def rec1_orders_vs_trades(ledger: Ledger, book_id: Optional[str] = None) -> Dict
     logger.info("Running Rec 1: Orders vs Trades")
     
     mismatches = []
-    orders = ledger.get_orders(book_id=book_id)
+    # Only check VALID orders and trades (default behavior, but explicit for clarity)
+    orders = ledger.get_orders(book_id=book_id, record_status="VALID")
     
     for order in orders:
         order_id = order["id"]
         order_quantity = order["quantity"]
         order_status = order["status"]
         
-        # Sum filled quantity from trades
-        trades = ledger.get_trades(order_id=order_id, book_id=book_id)
+        # Sum filled quantity from VALID trades only
+        trades = ledger.get_trades(order_id=order_id, book_id=book_id, record_status="VALID")
         filled_quantity = sum(t["quantity"] for t in trades)
         
         # Check consistency
@@ -86,7 +87,8 @@ def rec2_trades_vs_binance(ledger: Ledger, binance_client: BinanceClient, book_i
     # Get symbols with recent trades (last 7 days)
     seven_days_ago = int((time.time() - 7 * 24 * 3600) * 1000)
     
-    trades = ledger.get_trades(book_id=book_id)
+    # Only check VALID trades (default behavior, but explicit for clarity)
+    trades = ledger.get_trades(book_id=book_id, record_status="VALID")
     recent_trades = [t for t in trades if t["traded_at"] >= seven_days_ago]
     
     symbols_with_trades = set(t["symbol"] for t in recent_trades)
@@ -118,14 +120,33 @@ def rec2_trades_vs_binance(ledger: Ledger, binance_client: BinanceClient, book_i
                     missing_trades.append({
                         "symbol": symbol,
                         "exchange_trade_id": trade_id,
+                        "orderId": trade.get("orderId"),
                         "side": trade.get("side"),
+                        "isBuyer": trade.get("isBuyer"),
                         "quantity": trade.get("qty"),
                         "price": trade.get("price"),
                         "time": trade.get("time"),
                     })
             
-            # Find extra (in ledger but not in Binance) - less common, but check
-            # Note: This might happen if trades were deleted on exchange or ledger has test data
+            # Find extra (in ledger but not in Binance)
+            # These are trades that exist in ledger but not in Binance
+            extra = ledger_trade_ids - binance_trade_ids
+            for trade_id in extra:
+                trade = next(
+                    (t for t in recent_trades if str(t.get("exchange_trade_id", "")) == trade_id),
+                    None
+                )
+                if trade:
+                    extra_trades.append({
+                        "symbol": symbol,
+                        "exchange_trade_id": trade_id,
+                        "ledger_trade_id": trade.get("id"),
+                        "side": trade.get("side"),
+                        "quantity": trade.get("quantity"),
+                        "price": trade.get("price"),
+                        "traded_at": trade.get("traded_at"),
+                        "order_id": trade.get("order_id"),
+                    })
             
         except Exception as e:
             logger.error(f"Error fetching Binance trades for {symbol}: {e}")
@@ -135,8 +156,8 @@ def rec2_trades_vs_binance(ledger: Ledger, binance_client: BinanceClient, book_i
         "name": "Trades vs Binance",
         "symbols_checked": len(symbols_with_trades),
         "missing_trades": missing_trades,
-        "extra_trades": extra_trades,  # Not implemented fully, would need to check all Binance trades
-        "passed": len(missing_trades) == 0,
+        "extra_trades": extra_trades,
+        "passed": len(missing_trades) == 0 and len(extra_trades) == 0,
     }
 
 
@@ -153,8 +174,8 @@ def rec3_positions_vs_trades(ledger: Ledger, book_id: Optional[str] = None) -> D
         ledger_quantity = position["quantity"]
         ledger_avg_price = position["avg_price"]
         
-        # Calculate position from trades
-        trades = ledger.get_trades(symbol=symbol, book_id=book_id_val)
+        # Calculate position from VALID trades only
+        trades = ledger.get_trades(symbol=symbol, book_id=book_id_val, record_status="VALID")
         calculated_quantity = sum(
             t["quantity"] if t["side"] == "BUY" else -t["quantity"]
             for t in trades
@@ -253,12 +274,16 @@ def rec5_orders_vs_binance(ledger: Ledger, binance_client: BinanceClient, book_i
     """Rec 5: Orders vs Binance - check order status consistency."""
     logger.info("Running Rec 5: Orders vs Binance")
     
-    # Get open orders and recent orders from ledger
-    orders = ledger.get_orders(book_id=book_id, limit=100)  # Recent 100 orders
+    # Get open orders and recent orders from ledger (last 7 days)
+    # Only check VALID orders (default behavior, but explicit for clarity)
+    seven_days_ago = int((time.time() - 7 * 24 * 3600) * 1000)
+    all_orders = ledger.get_orders(book_id=book_id, record_status="VALID")
+    recent_orders = [o for o in all_orders if o.get("created_at", 0) >= seven_days_ago]
     
     mismatches = []
+    extra_orders = []  # Orders in ledger but not in Binance
     
-    for order in orders:
+    for order in recent_orders:
         if not order["exchange_order_id"]:
             continue
         
@@ -280,6 +305,7 @@ def rec5_orders_vs_binance(ledger: Ledger, binance_client: BinanceClient, book_i
                     "symbol": symbol,
                     "ledger_status": ledger_status,
                     "binance_status": binance_status,
+                    "issue": "status_mismatch",
                 })
             
             # Compare quantities
@@ -300,15 +326,29 @@ def rec5_orders_vs_binance(ledger: Ledger, binance_client: BinanceClient, book_i
                 })
                 
         except Exception as e:
-            # Order might not exist on exchange (filled and removed from history)
-            logger.debug(f"Could not fetch order {exchange_order_id} from Binance: {e}")
+            # Order might not exist on exchange
+            error_msg = str(e).lower()
+            if "does not exist" in error_msg or "-2013" in error_msg or "not found" in error_msg:
+                # Order doesn't exist in Binance - mark as extra
+                extra_orders.append({
+                    "ledger_order_id": order["id"],
+                    "exchange_order_id": exchange_order_id,
+                    "symbol": symbol,
+                    "ledger_status": order["status"],
+                    "created_at": order.get("created_at"),
+                    "reason": "order_not_found_on_exchange",
+                })
+            else:
+                # Other error (e.g., API error) - log but don't mark as extra
+                logger.debug(f"Could not fetch order {exchange_order_id} from Binance: {e}")
             continue
     
     return {
         "name": "Orders vs Binance",
-        "total_orders_checked": len([o for o in orders if o["exchange_order_id"]]),
+        "total_orders_checked": len([o for o in recent_orders if o["exchange_order_id"]]),
         "mismatches": mismatches,
-        "passed": len(mismatches) == 0,
+        "extra_orders": extra_orders,
+        "passed": len(mismatches) == 0 and len(extra_orders) == 0,
     }
 
 
@@ -348,8 +388,8 @@ def rec6_balances_vs_binance(ledger: Ledger, binance_client: BinanceClient, book
     
     mismatches = []
     
-    # Compare balances
-    all_assets = set(ledger_balances.keys()) | set(binance_balances.keys())
+    # Only compare assets we track in the ledger (ignore Binance-only dust/testnet airdrops)
+    all_assets = set(ledger_balances.keys())
     
     for asset in all_assets:
         ledger_free = ledger_balances.get(asset, {}).get("free", 0.0)
@@ -400,7 +440,7 @@ def main() -> int:
     logger.info(f"Book ID: {args.book_id or 'all'}")
     
     ledger = Ledger()
-    binance_client = BinanceClient()
+    binance_client = BinanceClient(use_testnet=True)  # Rec always uses testnet to match test orders
     
     # Run all reconciliations
     results = []

@@ -57,6 +57,9 @@ class Settings:
 
     # Feature flags
     use_testnet: bool = False
+    use_testnet_for_orders: bool = field(
+        default_factory=lambda: os.environ.get("USE_TESTNET_FOR_ORDERS", "false").lower() in ("true", "1", "yes")
+    )
 
     # Booking
     venue: str = "binance_spot"

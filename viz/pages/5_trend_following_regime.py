@@ -16,13 +16,19 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from scipy.optimize import nnls
-
 from config import settings
 from data import Storage
+from viz.backtest_utils import (
+    TRADING_DAYS,
+    rescale_to_target_vol as rescale_to_target_vol_util,
+    build_stats,
+    alpha_beta,
+    annual_turnover,
+    ridge_aggregation,
+    cost_metrics,
+)
 
 TIMEFRAME_5M = "5m"
-TRADING_DAYS = 252
 VOL_FLOOR = 1e-8
 
 st.title("Trend-following backtest (volatility regime)")
@@ -44,7 +50,10 @@ with st.sidebar:
     db_label = "Postgres (DATABASE_URL)" if settings.database_url else f"SQLite ({settings.db_path})"
     st.caption(f"Storage: {db_label}")
 
-    st.divider()
+# Create two columns: main content (left) and controls (right)
+col_main, col_controls = st.columns([3, 1])
+
+with col_controls:
     st.subheader("Strategy 1")
     fast1 = st.slider("Fast lookback (days)", 1, 30, 20, key="fast1_reg")
     slow_mult1 = st.slider("Slow multiple", 2, 8, 4, key="slow_mult1_reg")
@@ -148,25 +157,9 @@ pnl1, pos1, s1 = run_strategy(fast1, slow_mult1, std_look1, vol_look1, target_vo
 pnl2, pos2, s2 = run_strategy(fast2, slow_mult2, std_look2, vol_look2, target_vol, cap2, regime_lookback)
 pnl3, pos3, s3 = run_strategy(fast3, slow_mult3, std_look3, vol_look3, target_vol, cap3, regime_lookback)
 
-# Reg: 4 models (1d / 5d / 10d / 30d forward vol-normalized return = β·positions), nnls β≥0, then average betas
-vol_ret = ret.ewm(span=30, adjust=False).std().clip(lower=VOL_FLOOR)
-X = np.column_stack([pos1.values, pos2.values, pos3.values])
-default_beta = np.array([1.0 / 3, 1.0 / 3, 1.0 / 3])
-betas = []
-for horizon in (1, 5, 10, 30):
-    fwd_ret = ret.rolling(horizon).sum().shift(-horizon)
-    vol_h = vol_ret * np.sqrt(horizon)
-    y_h = (fwd_ret / vol_h).replace([np.inf, -np.inf], np.nan).values
-    valid = ~(np.isnan(X).any(axis=1) | np.isnan(y_h))
-    X_v, y_v = X[valid], y_h[valid]
-    if X_v.shape[0] > 10:
-        b, _ = nnls(X_v, y_v)
-        betas.append(b)
-    else:
-        betas.append(default_beta)
+# Reg: 4 models (1d/5d/10d/30d forward vol-normalized return)
+beta_reg, betas, horizon_labels = ridge_aggregation(pos1, pos2, pos3, ret, vol_ewm_span=30, is_intraday_hourly=False)
 beta_1d, beta_5d, beta_10d, beta_30d = betas[0], betas[1], betas[2], betas[3]
-beta_reg = (np.array(beta_1d) + np.array(beta_5d) + np.array(beta_10d) + np.array(beta_30d)) / 4
-# Combined position = avg(β)·pos; PnL = position.shift(1) * ret
 pos_reg = beta_reg[0] * pos1 + beta_reg[1] * pos2 + beta_reg[2] * pos3
 pnl_reg = pos_reg.shift(1) * ret
 pnl_reg = pnl_reg.fillna(0)
@@ -176,24 +169,13 @@ pos_avg = (pos1 + pos2 + pos3) / 3
 pnl_avg = pos_avg.shift(1) * ret
 pnl_avg = pnl_avg.fillna(0)
 
-# Rescale all series to match target vol (annualized); scale = target_vol_daily / realized_daily_std
-target_vol_daily = target_vol / np.sqrt(TRADING_DAYS)
-
-
-def rescale_to_target_vol(pnl_series: pd.Series, pos_series: pd.Series = None) -> tuple:
-    sd = pnl_series.std()
-    scale = target_vol_daily / sd if sd > 1e-12 else 1.0
-    pnl_scaled = pnl_series * scale
-    pos_scaled = pos_series * scale if pos_series is not None else None
-    return pnl_scaled, pos_scaled
-
-
-ret_scaled, _ = rescale_to_target_vol(ret, None)
-pnl1, pos1 = rescale_to_target_vol(pnl1, pos1)
-pnl2, pos2 = rescale_to_target_vol(pnl2, pos2)
-pnl3, pos3 = rescale_to_target_vol(pnl3, pos3)
-pnl_avg, pos_avg = rescale_to_target_vol(pnl_avg, pos_avg)
-pnl_reg, pos_reg = rescale_to_target_vol(pnl_reg, pos_reg)
+# Rescale all series to match target vol (daily data)
+ret_scaled, _ = rescale_to_target_vol_util(ret, None, target_vol, is_intraday=False)
+pnl1, pos1 = rescale_to_target_vol_util(pnl1, pos1, target_vol, is_intraday=False)
+pnl2, pos2 = rescale_to_target_vol_util(pnl2, pos2, target_vol, is_intraday=False)
+pnl3, pos3 = rescale_to_target_vol_util(pnl3, pos3, target_vol, is_intraday=False)
+pnl_avg, pos_avg = rescale_to_target_vol_util(pnl_avg, pos_avg, target_vol, is_intraday=False)
+pnl_reg, pos_reg = rescale_to_target_vol_util(pnl_reg, pos_reg, target_vol, is_intraday=False)
 
 # Cum return: raw = cumsum(log return), strategy = cumsum(log(1+pnl))
 cumret_raw = ret_scaled.cumsum()
@@ -273,82 +255,18 @@ fig.update_layout(
     showlegend=True,
 )
 fig.update_xaxes(rangeslider_visible=False)
-st.plotly_chart(fig, use_container_width=True)
+with col_main:
+    st.plotly_chart(fig, use_container_width=True)
 
-# Stats (duplicate helpers from vol-target)
-def level_from_log(cumlog: pd.Series) -> pd.Series:
-    return np.exp(cumlog) - 1
-
-
-def max_drawdown(cumlog: pd.Series) -> float:
-    level = level_from_log(cumlog)
-    peak = level.cummax()
-    dd = peak - level
-    return float(dd.max()) * 100
+# Stats: use shared module (simpler stats for EOD backtests)
 
 
-def avg_drawdown(cumlog: pd.Series) -> float:
-    level = level_from_log(cumlog)
-    peak = level.cummax()
-    dd = peak - level
-    return float(dd.mean()) * 100
-
-
-def alpha_beta(pnl: pd.Series, bench: pd.Series) -> tuple[float, float]:
-    m = pnl.notna() & bench.notna()
-    p = pnl[m].values
-    b = bench[m].values
-    if len(p) < 2 or b.var() == 0:
-        return np.nan, np.nan
-    beta = np.cov(p, b)[0, 1] / b.var()
-    alpha = p.mean() - beta * b.mean()
-    return alpha * TRADING_DAYS, beta
-
-
-def es95(series: pd.Series) -> float:
-    q = series.quantile(0.05)
-    return float(series[series <= q].mean()) * 100
-
-
-def annual_turnover(position: pd.Series) -> float:
-    return float(position.diff().abs().mean()) * TRADING_DAYS
-
-
-def build_stats(ret_series: pd.Series, is_raw: bool) -> dict:
-    if is_raw:
-        r = ret_series
-        ann_ret = r.mean() * TRADING_DAYS * 100
-        ann_vol = r.std() * np.sqrt(TRADING_DAYS) * 100
-        cumlog = r.cumsum()
-    else:
-        r = ret_series
-        ann_ret = r.mean() * TRADING_DAYS * 100
-        ann_vol = r.std() * np.sqrt(TRADING_DAYS) * 100
-        cumlog = np.log(1 + r).cumsum()
-    sharpe = ann_ret / ann_vol if ann_vol else np.nan
-    max_dd = max_drawdown(cumlog)
-    calmar = ann_ret / max_dd if max_dd else np.nan
-    avg_dd = avg_drawdown(cumlog)
-    skew = float(r.skew()) if len(r) else np.nan
-    es = es95(r)
-    return {
-        "Ann return (%)": ann_ret,
-        "Ann vol (%)": ann_vol,
-        "Sharpe": sharpe,
-        "Max DD (%)": max_dd,
-        "Avg DD (%)": avg_dd,
-        "Calmar": calmar,
-        "Skewness": skew,
-        "ES95 (%)": es,
-    }
-
-
-stats_raw = build_stats(ret_scaled, is_raw=True)
-stats1 = build_stats(pnl1, is_raw=False)
-stats2 = build_stats(pnl2, is_raw=False)
-stats3 = build_stats(pnl3, is_raw=False)
-stats_avg = build_stats(pnl_avg, is_raw=False)
-stats_reg = build_stats(pnl_reg, is_raw=False)
+stats_raw = build_stats(ret_scaled, is_raw=True, include_all_metrics=False)
+stats1 = build_stats(pnl1, is_raw=False, include_all_metrics=False)
+stats2 = build_stats(pnl2, is_raw=False, include_all_metrics=False)
+stats3 = build_stats(pnl3, is_raw=False, include_all_metrics=False)
+stats_avg = build_stats(pnl_avg, is_raw=False, include_all_metrics=False)
+stats_reg = build_stats(pnl_reg, is_raw=False, include_all_metrics=False)
 
 alpha1, beta1 = alpha_beta(pnl1, ret_scaled)
 alpha2, beta2 = alpha_beta(pnl2, ret_scaled)
@@ -357,11 +275,18 @@ alpha_avg, beta_avg = alpha_beta(pnl_avg, ret_scaled)
 alpha_reg, beta_reg_out = alpha_beta(pnl_reg, ret_scaled)
 
 turnover_raw = 0.0
-turnover1 = annual_turnover(pos1)
-turnover2 = annual_turnover(pos2)
-turnover3 = annual_turnover(pos3)
-turnover_avg = annual_turnover(pos_avg)
-turnover_reg = annual_turnover(pos_reg)
+turnover1 = annual_turnover(pos1, is_intraday=False)
+turnover2 = annual_turnover(pos2, is_intraday=False)
+turnover3 = annual_turnover(pos3, is_intraday=False)
+turnover_avg = annual_turnover(pos_avg, is_intraday=False)
+turnover_reg = annual_turnover(pos_reg, is_intraday=False)
+
+cm_raw = cost_metrics(turnover_raw, stats_raw["Ann vol (%)"], stats_raw["Sharpe"])
+cm1 = cost_metrics(turnover1, stats1["Ann vol (%)"], stats1["Sharpe"])
+cm2 = cost_metrics(turnover2, stats2["Ann vol (%)"], stats2["Sharpe"])
+cm3 = cost_metrics(turnover3, stats3["Ann vol (%)"], stats3["Sharpe"])
+cm_avg = cost_metrics(turnover_avg, stats_avg["Ann vol (%)"], stats_avg["Sharpe"])
+cm_reg = cost_metrics(turnover_reg, stats_reg["Ann vol (%)"], stats_reg["Sharpe"])
 
 rows_table = [
     ("Ann return (%)", stats_raw["Ann return (%)"], stats1["Ann return (%)"], stats2["Ann return (%)"], stats3["Ann return (%)"], stats_avg["Ann return (%)"], stats_reg["Ann return (%)"]),
@@ -373,6 +298,10 @@ rows_table = [
     ("Skewness", stats_raw["Skewness"], stats1["Skewness"], stats2["Skewness"], stats3["Skewness"], stats_avg["Skewness"], stats_reg["Skewness"]),
     ("ES95 (%)", stats_raw["ES95 (%)"], stats1["ES95 (%)"], stats2["ES95 (%)"], stats3["ES95 (%)"], stats_avg["ES95 (%)"], stats_reg["ES95 (%)"]),
     ("Ann turnover", turnover_raw, turnover1, turnover2, turnover3, turnover_avg, turnover_reg),
+    ("Holding period (days)", cm_raw["Holding period (days)"], cm1["Holding period (days)"], cm2["Holding period (days)"], cm3["Holding period (days)"], cm_avg["Holding period (days)"], cm_reg["Holding period (days)"]),
+    ("Ann cost (%)", cm_raw["Ann cost (%)"], cm1["Ann cost (%)"], cm2["Ann cost (%)"], cm3["Ann cost (%)"], cm_avg["Ann cost (%)"], cm_reg["Ann cost (%)"]),
+    ("Cost/vol", cm_raw["Cost/vol"], cm1["Cost/vol"], cm2["Cost/vol"], cm3["Cost/vol"], cm_avg["Cost/vol"], cm_reg["Cost/vol"]),
+    ("Net Sharpe", cm_raw["Net Sharpe"], cm1["Net Sharpe"], cm2["Net Sharpe"], cm3["Net Sharpe"], cm_avg["Net Sharpe"], cm_reg["Net Sharpe"]),
     ("Alpha vs raw (ann %)", np.nan, alpha1 * 100 if not np.isnan(alpha1) else np.nan, alpha2 * 100 if not np.isnan(alpha2) else np.nan, alpha3 * 100 if not np.isnan(alpha3) else np.nan, alpha_avg * 100 if not np.isnan(alpha_avg) else np.nan, alpha_reg * 100 if not np.isnan(alpha_reg) else np.nan),
     ("Beta vs raw", np.nan, beta1, beta2, beta3, beta_avg, beta_reg_out),
 ]
@@ -380,11 +309,12 @@ stats_df = pd.DataFrame(
     rows_table,
     columns=["Metric", "Raw", "Strategy 1", "Strategy 2", "Strategy 3", "Avg (1+2+3)", "Reg (β≥0)"],
 ).set_index("Metric")
-st.dataframe(stats_df.style.format("{:.2f}", na_rep="-"), use_container_width=True)
-
-st.caption(f"Total days: {len(eod)} | {eod['date'].min()} → {eod['date'].max()}")
+with col_main:
+    st.dataframe(stats_df.style.format("{:.2f}", na_rep="-"), use_container_width=True)
+    
+    st.caption(f"Total days: {len(eod)} | {eod['date'].min()} → {eod['date'].max()}")
 st.caption(
-    f"Reg (β≥0): 4 models (1d/5d/10d/30d fwd ret/vol), avg betas = [{beta_reg[0]:.3f}, {beta_reg[1]:.3f}, {beta_reg[2]:.3f}] "
+    f"Reg (β≥0): 4 models ({'/'.join(horizon_labels)} fwd ret/vol), avg betas = [{beta_reg[0]:.3f}, {beta_reg[1]:.3f}, {beta_reg[2]:.3f}] "
     f"(1d: [{beta_1d[0]:.2f},{beta_1d[1]:.2f},{beta_1d[2]:.2f}] 5d: [{beta_5d[0]:.2f},{beta_5d[1]:.2f},{beta_5d[2]:.2f}] "
     f"10d: [{beta_10d[0]:.2f},{beta_10d[1]:.2f},{beta_10d[2]:.2f}] 30d: [{beta_30d[0]:.2f},{beta_30d[1]:.2f},{beta_30d[2]:.2f}])"
 )

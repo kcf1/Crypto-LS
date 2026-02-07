@@ -37,6 +37,14 @@ pages = [
     st.Page("pages/4_trend_following_backtest.py", title="Trend-Following Backtest", icon="📈"),
     st.Page("pages/5_trend_following_regime.py", title="Trend-Following (Regime)", icon="🔄"),
     st.Page("pages/6_channel_breakout_backtest.py", title="Channel-Breakout Backtest", icon="📊"),
+    st.Page("pages/7_acceleration_backtest.py", title="Acceleration Backtest", icon="⚡"),
+    st.Page("pages/8_block_momentum_backtest.py", title="Block Momentum Backtest", icon="📊"),
+    st.Page("pages/16_mean_reversion_backtest.py", title="Mean Reversion Backtest", icon="🔄"),
+    st.Page("pages/17_orthogonal_alpha_backtest.py", title="Orthogonal Alpha Backtest", icon="📈"),
+    st.Page("pages/18_wed_thu_backtest.py", title="Wed/Thu Calendar Backtest", icon="📅"),
+    st.Page("pages/19_ema_vol_backtest.py", title="EMA Vol Backtest", icon="📈"),
+    st.Page("pages/20_breakout_vol_backtest.py", title="Breakout Vol Backtest", icon="📊"),
+    st.Page("pages/21_combined_old_strategies_backtest.py", title="Combined Old Strategies Backtest", icon="🧩"),
     st.Page("pages/8_open_interest.py", title="Open Interest", icon="💹"),
     st.Page("pages/9_funding_rate.py", title="Funding Rate", icon="💰"),
     st.Page("pages/10_basis.py", title="Basis", icon="📐"),
@@ -44,6 +52,7 @@ pages = [
     st.Page("pages/12_top_long_short_account.py", title="Top Long/Short Account", icon="🏆"),
     st.Page("pages/13_top_long_short_position.py", title="Top Long/Short Position", icon="📊"),
     st.Page("pages/14_market_cap.py", title="Market Cap", icon="💎"),
+    st.Page("pages/15_order_management.py", title="Order Management", icon="📊"),
 ]
 
 pg = st.navigation(pages, position="hidden")
@@ -70,6 +79,37 @@ with st.sidebar:
         st.caption("Same as above with position scaled by volatility regime")
         st.page_link("pages/6_channel_breakout_backtest.py", label="Channel-Breakout Backtest", icon="📊")
         st.caption("Signal = (price - mid) / channel range × 3, 2d EMA smooth")
+        
+        st.divider()
+        st.markdown("**📜 Old Strategies**")
+        
+        st.markdown("**[Trend]**")
+        st.page_link("pages/7_acceleration_backtest.py", label="Acceleration Backtest", icon="⚡")
+        st.caption("Signal = acceleration of EMA crossover (momentum-of-momentum), standardized, vol-matched")
+        st.page_link("pages/8_block_momentum_backtest.py", label="Block Momentum Backtest", icon="📊")
+        st.caption("Signal = (higher high + higher low) / range over blocks, smoothed, vol-matched")
+        st.page_link("pages/19_ema_vol_backtest.py", label="EMA Vol Backtest", icon="📈")
+        st.caption("Signal = EMA crossover standardized, × Weibull CDF vol tilt, × strategy decay, vol-matched")
+        
+        st.markdown("**[Breakout]**")
+        st.page_link("pages/20_breakout_vol_backtest.py", label="Breakout Vol Backtest", icon="📊")
+        st.caption("Signal = (price - mid) / range × 2, smoothed, × Weibull CDF vol tilt, × strategy decay, vol-matched")
+        
+        st.markdown("**[Reversal]**")
+        st.page_link("pages/16_mean_reversion_backtest.py", label="Mean Reversion Backtest", icon="🔄")
+        st.caption("Signal = -sign(momentum) when |momentum| > threshold and volume decay > threshold")
+        
+        st.markdown("**[Alpha]**")
+        st.page_link("pages/17_orthogonal_alpha_backtest.py", label="Orthogonal Alpha Backtest", icon="📈")
+        st.caption("Signal = alpha orthogonal to momentum via rolling OLS, standardized, vol-matched")
+        
+        st.markdown("**[Calendar]**")
+        st.page_link("pages/18_wed_thu_backtest.py", label="Wed/Thu Calendar Backtest", icon="📅")
+        st.caption("Signal = +1 on Wed, -1 on Thu, 0 otherwise; calendar effect, vol-matched")
+
+        st.markdown("**[Combined]**")
+        st.page_link("pages/21_combined_old_strategies_backtest.py", label="Combined Old Strategies", icon="🧩")
+        st.caption("All 7 strategies, default params: weighted (fit_models) or ridge aggregation")
 
     with st.expander("⚡ Futures Market Data (Binance)", expanded=False):
         st.page_link("pages/8_open_interest.py", label="Open Interest", icon="💹")
@@ -88,6 +128,10 @@ with st.sidebar:
     with st.expander("🌐 External Data (CoinGecko)", expanded=False):
         st.page_link("pages/14_market_cap.py", label="Market Cap", icon="💎")
         st.caption("Plot market capitalization and related metrics (daily snapshots)")
+
+    with st.expander("📊 Trading & Orders", expanded=False):
+        st.page_link("pages/15_order_management.py", label="Order Management", icon="📊")
+        st.caption("Manual order placement, view orders, trades, positions, and balances")
 
     st.divider()
     st.caption("💡 Tip: Use expanders to navigate between page groups")
