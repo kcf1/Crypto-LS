@@ -14,52 +14,80 @@ This document describes the overall architecture, data flow, and operations of t
 
 ## System Overview
 
-Crypto-LS is a cryptocurrency trading system focused on:
-- **Market Data Collection**: Automated collection of OHLCV (Open, High, Low, Close, Volume) data from Binance Spot
-- **Futures Data Collection**: Automated collection of funding rates, open interest, basis (premium index), and long/short ratios (global and top trader account & position) from Binance Futures
-- **Data Integrity**: Automated checks to ensure data quality and completeness
-- **Strategy Backtesting**: Streamlit-based visualization and backtesting tools
-- **Order Management**: Framework for order execution and booking **[WIP]** — see [Booking System & Reconciliations Architecture](plans/architecture/booking-system-and-recon.md)
+Crypto-LS is a cryptocurrency trading system with:
 
-The system is containerized using Docker and uses PostgreSQL as the primary database.
+- **Market Data Collection**: Automated collection of OHLCV from Binance Spot and futures data (funding rate, open interest, basis, long/short ratios) from Binance Futures
+- **Data Integrity**: Automated checks for data quality and completeness
+- **Strategy Backtesting**: Streamlit-based visualization and backtesting
+- **Order Execution & Booking**: Order Executor service (Redis Stream consumer + HTTP API) for placing orders on Binance and booking to the ledger; Fill Sync service for periodic fill reconciliation
+
+The system is containerized with Docker. PostgreSQL is the primary database; Redis is used for the order stream (consumer group pattern).
 
 ## Services
 
 ### Docker Services
 
-The system runs three Docker services defined in `docker-compose.yml`:
+Services are defined in `docker-compose.yml`. Core services:
 
 #### 1. PostgreSQL (`postgres`)
 - **Image**: `postgres:16-alpine`
 - **Container**: `crypto-ls-postgres`
-- **Port**: `5432` (mapped to host)
-- **Database**: `cryptols`
-- **User/Password**: `crypto/crypto`
-- **Volume**: `postgres_data` (persistent storage)
-- **Health Check**: `pg_isready` every 5 seconds
-- **Purpose**: Primary data storage for OHLCV data and booking records **[WIP]**
+- **Port**: `5432`
+- **Database**: `cryptols` (user/password: `crypto/crypto`)
+- **Volume**: `postgres_data`
+- **Health check**: `pg_isready` every 5s
+- **Purpose**: Primary storage for OHLCV, futures data, and booking (orders, trades, positions, balances, adjustments)
 
 #### 2. pgAdmin (`pgadmin`)
 - **Image**: `dpage/pgadmin4:latest`
 - **Container**: `crypto-ls-pgadmin`
-- **Port**: `5050` (mapped to host)
-- **Purpose**: Web-based database administration interface
-- **Access**: http://localhost:5050 (admin@example.com / admin)
+- **Port**: `5050`
+- **Purpose**: Web UI for database administration (http://localhost:5050; admin@example.com / admin)
+- **Note**: Optional; start only when needed to save memory.
 
-#### 3. Data Updater (`data-updater`)
-- **Build**: Custom image from `Dockerfile.updater`
+#### 3. Redis (`redis`)
+- **Image**: `redis:7-alpine`
+- **Container**: `crypto-ls-redis`
+- **Port**: `6379`
+- **Volume**: `redis_data`
+- **Config**: AOF persistence; maxmemory 256MB; policy `allkeys-lru`
+- **Purpose**: Order stream for automated order flow. Stream name: `order_stream`; consumer group: `order_executors`. Order Executor consumes from this stream, places orders via Binance API, and books to the ledger.
+
+#### 4. Data Updater (`data-updater`)
+- **Build**: `Dockerfile.updater`
 - **Container**: `crypto-ls-data-updater`
 - **Script**: `scripts/services/run_data_updater.py`
-- **Interval**: 300 seconds (5 minutes), aligned to :05, :10, :15, etc.
-- **Restart Policy**: `unless-stopped`
-- **Dependencies**: Waits for PostgreSQL to be healthy
-- **Purpose**: Continuously collects OHLCV from Binance Spot and futures data (funding rate, open interest, basis, global/top long-short account & position) from Binance Futures API
+- **Interval**: 300s (5 minutes), aligned to :05, :10, :15, etc.
+- **Depends on**: postgres (healthy)
+- **Purpose**: Collects OHLCV from Binance Spot and futures data (funding rate, open interest, basis, global/top long-short account & position) from Binance Futures API; writes to PostgreSQL.
+
+#### 5. Order Executor (`order-executor`)
+- **Build**: `Dockerfile.executor`
+- **Container**: `crypto-ls-order-executor`
+- **Port**: `8000`
+- **Depends on**: postgres (healthy), redis (started)
+- **Purpose**: (1) Redis consumer: reads from `order_stream`, places orders via `BookingOrchestrator`, books to Ledger, syncs fills immediately, ACKs messages. (2) HTTP API: health, query orders/positions/balances/trades, place order, cancel order. (3) Admin: manual trade/order booking, adjustments, rebuild positions/balances, reconciliation. See [Order & Booking Services Architecture](plans/architecture/order-booking-services-architecture.md).
+
+#### 6. Fill Sync (`fill-sync`)
+- **Build**: `Dockerfile.executor` (same image as Order Executor, different command)
+- **Container**: `crypto-ls-fill-sync`
+- **Command**: `python scripts/services/run_fill_sync.py`
+- **Depends on**: postgres (healthy)
+- **Purpose**: Runs every 60 seconds; syncs fills from Binance for configured symbols and books trades to the ledger. Backup for any fills not captured by Order Executor’s immediate sync.
+
+#### 7. RedisInsight (`redisinsight`) — optional
+- **Image**: `redis/redisinsight:latest`
+- **Container**: `crypto-ls-redisinsight`
+- **Port**: `5540`
+- **Purpose**: Redis GUI for inspecting streams and keys. Start only when needed.
 
 ### Service Startup Order
 
-1. PostgreSQL starts and becomes healthy
-2. pgAdmin starts (depends on postgres)
-3. Data Updater starts (waits for postgres to be healthy)
+1. PostgreSQL starts and becomes healthy.
+2. pgAdmin and Redis can start (pgAdmin depends on postgres).
+3. Data Updater starts after postgres is healthy.
+4. Order Executor starts after postgres is healthy and redis is started.
+5. Fill Sync starts after postgres is healthy.
 
 ## Database
 
@@ -83,9 +111,13 @@ The database schema is managed by Alembic migrations (`alembic/versions/`).
   - `close_time` (BigInteger): Bar end time (milliseconds)
 - **Index**: `ix_ohlcv_symbol_timeframe` on `(symbol, timeframe)`
 
-**Booking Tables** (orders, trades, positions)
-- Defined in Alembic but not yet actively used
-- Framework for future order execution tracking
+**Booking Tables** (managed by `booking/ledger.py`)
+- **orders**: Order records (ledger id, exchange id, symbol, side, quantity, status, book_id, etc.)
+- **trades**: Fill/trade records (linked to orders; quantity, price, commission, exchange_trade_id)
+- **positions**: Aggregated position per book/symbol (from trades and adjustments)
+- **balances**: Aggregated balance per book/asset (from trades and adjustments)
+- **adjustments**: Manual adjustments for reconciliation (balance or position deltas)
+- Used by Order Executor (place + book) and Fill Sync; queryable via Order Executor HTTP API.
 
 **Revision 002**: Futures Data tables
 
@@ -315,12 +347,31 @@ PostgreSQL Database
    - **Liquidations methods**: `write_liquidations()`, `get_latest_liquidation_time()` (available but not actively used)
    - All write methods use ON CONFLICT UPDATE
 
-### 2. Data Consumption Flow
+### 2. Order Execution & Booking Flow
+
+```
+Strategy / External System / HTTP API
+    ↓
+Redis Stream: order_stream (consumer group: order_executors)
+    ↓
+Order Executor (scripts/services/run_order_executor.py)
+    ├─ BookingOrchestrator.place_order() → Binance API
+    ├─ Ledger.record_order() / record_trade()
+    └─ Immediate fill sync after place
+    ↓
+PostgreSQL (orders, trades, positions, balances)
+
+Fill Sync (scripts/services/run_fill_sync.py): every 60s, syncs fills from Binance for all symbols, books missed trades to Ledger.
+```
+
+Manual operations (manual trade/order, adjustments, rebuilds, reconciliation) go through Order Executor HTTP API (`POST /admin/*`, `GET /admin/reconciliation`).
+
+### 3. Data Consumption Flow (Market Data → Viz)
 
 ```
 PostgreSQL Database
     ↓
-Storage.read_ohlcv()
+Storage.read_ohlcv() / read_*()
     ↓
 Streamlit Pages (viz/pages/)
     ↓
@@ -338,7 +389,7 @@ Visualization & Backtesting
 - `8_open_interest.py`, `9_funding_rate.py`: Open interest and funding rate
 - `10_basis.py`, `11_global_long_short_account.py`, `12_top_long_short_account.py`, `13_top_long_short_position.py`: Futures market data (basis, L/S ratios)
 
-### 3. Data Integrity Flow
+### 4. Data Integrity Flow
 
 ```
 PostgreSQL Database
@@ -393,42 +444,43 @@ Reports (reports/integrity/)
   - **`binance/`**: Binance WebSocket implementation
 
 #### `scripts/`
-- **`run_data_updater.py`**: Main data collection scheduler (runs all registered tasks)
-- **`check_missing_bars.py`**, **`check_missing_funding_rate.py`**, **`check_missing_open_interest.py`**: Integrity checks
-- **`check_missing_basis.py`**, **`check_missing_global_long_short_account.py`**, **`check_missing_top_long_short_account.py`**, **`check_missing_top_long_short_position.py`**: Futures market data integrity (7 days, 5m)
-- **`run_integrity_checks.py`**: Runner for all integrity checks
-- **`download_last_24h.py`**: One-time OHLCV data download script
-- **`update_5y_5m.py`**: Historical OHLCV data backfill script (5 years, 5m)
-- **`backfill_funding_rate.py`**: Historical funding rate backfill script (5 years)
-- **`backfill_open_interest.py`**: Historical open interest backfill script (~30 days, 5m)
-- **`backfill_basis.py`**, **`backfill_global_long_short_account.py`**, **`backfill_top_long_short_account.py`**, **`backfill_top_long_short_position.py`**: Futures market data backfill (~30 days, 5m)
-- **`backfill_liquidations.py`**: Historical liquidations backfill script (7 days, requires API key, available but not actively used)
+- **`services/run_data_updater.py`**: Data collection scheduler (runs all registered tasks every 5 minutes)
+- **`services/run_order_executor.py`**: Order Executor service — Redis Stream consumer for `order_stream` + Flask HTTP API (orders, positions, balances, trades, admin)
+- **`services/run_fill_sync.py`**: Fill Sync service — periodic sync of fills from Binance to Ledger (every 60s)
+- **`integrity/`**: Integrity check scripts (missing bars, funding rate, open interest, basis, L/S ratios); **`run_integrity_checks.py`** runs all and writes reports to `reports/integrity/`
+- **`integrity/check_booking_recon.py`**: Booking reconciliation (orders vs trades, positions vs Binance, etc.); invoked via Order Executor `GET /admin/reconciliation` or standalone
+- **`utils/rebuild_positions.py`**, **`utils/rebuild_balances.py`**: Rebuild positions/balances from ledger; used by Order Executor admin endpoints
+- **`download_last_24h.py`**, **`update_5y_5m.py`**, **`backfill_*.py`**: One-time and historical backfill scripts
 - **`test_*.py`**: Testing and validation scripts
 
 #### `viz/`
 - **`app.py`**: Streamlit main application
 - **`pages/`**: Individual Streamlit pages for visualization and backtesting
 
-#### `execution/` **[WIP]**
-- **`binance/client.py`**: Binance execution API client
-- **`order_manager.py`**: Order management logic
+#### `execution/`
+- **`binance/client.py`**: Binance Spot execution API client (place/cancel order, etc.)
+- **`order_manager.py`**: Order management (place/cancel on exchange)
+- **`orchestrator.py`**: `BookingOrchestrator` — coordinates place order on exchange, record order/trades in Ledger, immediate fill sync; used by Order Executor and Fill Sync
 
-#### `booking/` **[WIP]**
-- **`ledger.py`**: Order and trade booking
+#### `booking/`
+- **`ledger.py`**: Ledger — records orders, trades, positions, balances, adjustments in PostgreSQL; used by Order Executor and Fill Sync
 
 ### Module Dependencies
 
+**Data collection:**
 ```
 scripts/services/run_data_updater.py
-    ↓
-data/updates/__init__.py
-    ├─ binance_ohlcv.py ──→ Collector (Spot API)
-    ├─ binance_funding_rate.py ──→ Collector (Futures API)
-    ├─ binance_open_interest.py ──→ Collector (Futures API)
-    ├─ binance_basis.py, binance_global_long_short_account.py, binance_top_long_short_account.py, binance_top_long_short_position.py ──→ Collector (Futures API)
-    ↓
-data/collector.py ──→ Binance Spot/Futures APIs
-data/storage.py ──→ PostgreSQL
+    → data/updates/__init__.py → data/collector.py (Binance APIs), data/storage.py → PostgreSQL
+```
+
+**Order execution & booking:**
+```
+Redis (order_stream) → scripts/services/run_order_executor.py
+    → execution/orchestrator.py (BookingOrchestrator) → execution/order_manager.py, booking/ledger.py
+    → Binance API (place/cancel), PostgreSQL (orders, trades, positions, balances)
+
+scripts/services/run_fill_sync.py
+    → execution/orchestrator.py (sync_fills_for_symbol), booking/ledger.py → PostgreSQL
 ```
 
 ## Operations Flow
@@ -440,87 +492,60 @@ data/storage.py ──→ PostgreSQL
    docker compose up -d
    ```
 
-2. **PostgreSQL Initialization**
-   - Container starts
-   - Health check runs every 5 seconds
-   - Database `cryptols` created
-   - Schema applied via Alembic (if needed)
+2. **PostgreSQL** starts first; health check runs every 5s; database `cryptols` and schema (Alembic) as needed.
 
-3. **Data Updater Initialization**
-   - Waits for PostgreSQL to be healthy
-   - Calculates next aligned 5-minute mark
-   - Sleeps until alignment
-   - Starts collection loop
+3. **Redis** starts; no health dependency for other services (Order Executor only needs redis started).
+
+4. **Data Updater** waits for postgres healthy, then sleeps until next aligned 5-minute mark and starts the collection loop.
+
+5. **Order Executor** waits for postgres healthy and redis started; starts Flask HTTP server and Redis Stream consumer (listens to `order_stream`).
+
+6. **Fill Sync** waits for postgres healthy; sleeps until next aligned minute, then runs a sync cycle every 60s.
 
 ### Normal Operation
 
-1. **Every 5 Minutes** (aligned to :05, :10, :15, etc.)
-   - Data updater wakes up
-   - Runs all registered tasks concurrently:
-     - **OHLCV Task**: Fetches new 5m bars from Spot API
-     - **Funding Rate Task**: Checks for new funding rates (updates every 8h, skips if no new data)
-     - **Open Interest Task**: Fetches new 5m open interest records
-     - **Basis, Global L/S Account, Top L/S Account, Top L/S Position Tasks**: Fetches new 5m futures market data (~30 days retention)
-   - Each task:
-     - Fetches new data from Binance
-     - Writes to database
-     - Logs results
-   - Sleeps until next aligned mark
+1. **Every 5 minutes** (data-updater): OHLCV, funding rate, open interest, basis, L/S account and position tasks run; data written to PostgreSQL.
 
-2. **Data Integrity Checks** (scheduled separately)
-   - Run `scripts/integrity/check_missing_bars.py` or `scripts/integrity/run_integrity_checks.py`
-   - Generate reports in `reports/integrity/`
-   - Alert on coverage issues
+2. **Continuous** (order-executor): Consumes messages from `order_stream`; for each message, places order via Binance, books to Ledger, syncs fills, ACKs. HTTP API (health, orders, positions, balances, trades, admin) available on port 8000.
 
-3. **Visualization** (on-demand)
-   - Start Streamlit: `streamlit run viz/app.py`
-   - Access pages via web interface
-   - Pages query database via `Storage.read_ohlcv()`
+3. **Every 60 seconds** (fill-sync): Syncs fills from Binance for configured symbols; books any missed trades to Ledger.
+
+4. **Data integrity** (on-demand or scheduled): Run `scripts/integrity/run_integrity_checks.py`; reports in `reports/integrity/`.
+
+5. **Visualization** (on-demand): `streamlit run viz/app.py`; pages read from PostgreSQL via Storage.
 
 ### Error Handling
 
-- **Task Failures**: Each task's exceptions are caught and logged; one failure doesn't stop others
-- **Rate Limiting**: 429 errors handled with exponential backoff
-- **Database Errors**: Logged and re-raised
-- **Service Restarts**: `data-updater` has `restart: unless-stopped` policy
+- **Task failures**: Data-updater tasks log exceptions; one failure does not stop others.
+- **Rate limiting**: 429 from Binance handled with retries/backoff.
+- **Order Executor**: On process error, Redis message is not ACKed and can be retried by another consumer in the group.
+- **Restarts**: `data-updater`, `order-executor`, `fill-sync` use `restart: unless-stopped`.
 
 ## Configuration
 
 ### Environment Variables
 
-Set in `.env` file or Docker environment:
+Set in `.env` or Docker environment:
 
-- **`DATABASE_URL`**: PostgreSQL connection string
-  - Format: `postgresql://user:password@host:port/database`
-  - Default (Docker): `postgresql://crypto:crypto@postgres:5432/cryptols`
-  - Local: `postgresql://crypto:crypto@localhost:5432/cryptols`
-
-- **`UPDATER_INTERVAL_SEC`**: Data collection interval in seconds
-  - Default: `300` (5 minutes)
-
-- **`BINANCE_DATA_API_KEY`**: Binance API key for data collection (read-only, reserved for future use)
-- **`BINANCE_DATA_API_SECRET`**: Binance API secret for data collection (read-only, reserved for future use)
-- **`BINANCE_TRADING_API_KEY`**: Binance API key for trading/order management (read + trade)
-- **`BINANCE_TRADING_API_SECRET`**: Binance API secret for trading/order management
-- **`BINANCE_API_KEY`**: Legacy single API key (fallback if separate keys not set)
-- **`BINANCE_API_SECRET`**: Legacy single API secret (fallback if separate keys not set)
-- **`BINANCE_TESTNET_API_KEY`**: Testnet API key
-- **`BINANCE_TESTNET_API_SECRET`**: Testnet API secret
+- **`DATABASE_URL`**: PostgreSQL connection string (e.g. `postgresql://crypto:crypto@postgres:5432/cryptols` in Docker, `@localhost:5432` locally).
+- **`UPDATER_INTERVAL_SEC`**: Data collection interval in seconds (default `300`).
+- **`REDIS_URL`**: Redis connection (default in Docker: `redis://redis:6379/0`; local: `redis://localhost:6379/0`). Used by Order Executor for `order_stream`.
+- **`ORDER_EXECUTOR_PORT`**, **`ORDER_EXECUTOR_HOST`**: Order Executor HTTP server (default `8000`, `0.0.0.0`).
+- **Binance API**: `BINANCE_TRADING_API_KEY` / `BINANCE_TRADING_API_SECRET` for trading and order execution; optional `BINANCE_DATA_API_KEY` / `BINANCE_DATA_API_SECRET` for data; legacy `BINANCE_API_KEY` / `BINANCE_API_SECRET` fallback; testnet keys for testnet.
 
 ### Settings (`config/settings.py`)
 
-- **Symbols**: `TOP_100_SYMBOLS` (100 USDT pairs) - used for both Spot and Futures
-- **Default Timeframe**: `5m`
-- **OHLCV Limit**: `1000` bars per API request
-- **Open Interest Period**: `5m` (default)
-- **Funding Rate Collection**: Enabled by default
-- **Logging**: File-based logging to `logs/app.log`
+- **Symbols**: `TOP_100_SYMBOLS` (100 USDT pairs) for Spot and Futures.
+- **Default timeframe**: `5m`; OHLCV limit 1000 bars per request; open interest period `5m`.
+- **Venue**: Used by Order Executor for order placement (e.g. `binance_spot`).
+- **Logging**: File-based to `logs/app.log`; level from config.
 
 ### Docker Configuration
 
-- **`docker-compose.yml`**: Service definitions
-- **`Dockerfile.updater`**: Data updater container image
-- **Volumes**: `postgres_data` for database persistence
+- **`docker-compose.yml`**: Defines postgres, pgadmin, redis, redisinsight, data-updater, order-executor, fill-sync.
+- **`Dockerfile.updater`**: Data updater image.
+- **`Dockerfile.executor`**: Order Executor and Fill Sync image (same image, different command for fill-sync).
+- **Volumes**: `postgres_data`, `redis_data`, `redisinsight_data`.
 
 ## Data Collection Details
 
@@ -567,21 +592,16 @@ Data collection runs at aligned 5-minute marks:
 
 ## Monitoring
 
-See `docs/operations/monitoring/monitoring.md` for detailed monitoring procedures.
+See `docs/operations/monitoring/monitoring.md` for detailed procedures.
 
 ### Key Metrics
 
-- **Service Status**: `docker compose ps`
-- **Data Collection Logs**: `docker logs -f crypto-ls-data-updater`
-- **Database Size**: Query `pg_database_size('cryptols')`
-- **Latest Data**: Query `MAX(open_time)` per symbol
-- **Coverage**: Run integrity checks
-
-### Health Checks
-
-- **PostgreSQL**: Built-in health check in Docker
-- **Data Updater**: Check container status and logs
-- **Data Integrity**: Automated checks via `check_missing_bars.py`
+- **Service status**: `docker compose ps`
+- **Data collection**: `docker logs -f crypto-ls-data-updater`
+- **Order Executor**: `docker logs -f crypto-ls-order-executor`; HTTP `GET http://localhost:8000/health`
+- **Fill Sync**: `docker logs -f crypto-ls-fill-sync`
+- **Redis**: `docker compose exec redis redis-cli ping`; stream info: `redis-cli xinfo streams`
+- **Database**: `pg_database_size('cryptols')`; latest data per symbol; run integrity checks for coverage
 
 ## Extensibility
 
@@ -620,9 +640,7 @@ See `docs/operations/monitoring/monitoring.md` for detailed monitoring procedure
 
 ## Related Documentation
 
-- **Operations Manuals**: `docs/operations/`
-  - `docker-setup.md`: Docker setup and configuration
-  - `monitoring.md`: Monitoring and troubleshooting
-  - `data-integrity.md`: Data integrity framework
+- **Order & booking**: [Order & Booking Services Architecture](plans/architecture/order-booking-services-architecture.md)
+- **Operations**: `docs/operations/` — docker-setup, monitoring, data-integrity
 - **Reports**: `reports/README.md`
 - **Visualization**: `viz/README.md`
