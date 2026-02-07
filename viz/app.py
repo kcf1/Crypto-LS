@@ -44,6 +44,7 @@ pages = [
     st.Page("pages/18_wed_thu_backtest.py", title="Wed/Thu Calendar Backtest", icon="📅"),
     st.Page("pages/19_ema_vol_backtest.py", title="EMA Vol Backtest", icon="📈"),
     st.Page("pages/20_breakout_vol_backtest.py", title="Breakout Vol Backtest", icon="📊"),
+    st.Page("pages/21_combined_old_strategies_backtest.py", title="Combined Old Strategies Backtest", icon="🧩"),
     st.Page("pages/8_open_interest.py", title="Open Interest", icon="💹"),
     st.Page("pages/9_funding_rate.py", title="Funding Rate", icon="💰"),
     st.Page("pages/10_basis.py", title="Basis", icon="📐"),
@@ -105,6 +106,10 @@ with st.sidebar:
         st.markdown("**[Calendar]**")
         st.page_link("pages/18_wed_thu_backtest.py", label="Wed/Thu Calendar Backtest", icon="📅")
         st.caption("Signal = +1 on Wed, -1 on Thu, 0 otherwise; calendar effect, vol-matched")
+
+        st.markdown("**[Combined]**")
+        st.page_link("pages/21_combined_old_strategies_backtest.py", label="Combined Old Strategies", icon="🧩")
+        st.caption("All 7 strategies, default params: weighted (fit_models) or ridge aggregation")
 
     with st.expander("⚡ Futures Market Data (Binance)", expanded=False):
         st.page_link("pages/8_open_interest.py", label="Open Interest", icon="💹")

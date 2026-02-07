@@ -16,11 +16,17 @@ try:
     from sklearn.linear_model import RidgeCV
 except ImportError:
     RidgeCV = None
+try:
+    from sklearn.cross_decomposition import PLSRegression
+except ImportError:
+    PLSRegression = None
 
-# Constants
-TRADING_DAYS = 252  # For daily/annualized statistics
-TRADING_HOURS_PER_YEAR = 24 * 252  # 6048 hours (for intraday position sizing)
+# Constants (crypto 24/7: use 360 days per year)
+TRADING_DAYS = 360  # Days per year for annualized statistics
+TRADING_HOURS_PER_YEAR = 24 * 360  # 8640 hours (intraday position sizing)
 VOL_FLOOR = 1e-8
+# Cost: 15 bps per trip for cost-adjusted metrics
+COST_BPS_PER_TRIP = 15
 
 
 # ============================================================================
@@ -185,6 +191,123 @@ def ridge_aggregation(
 
     beta_reg = (np.array(betas[0]) + np.array(betas[1]) + np.array(betas[2]) + np.array(betas[3])) / 4
     return beta_reg, betas, labels
+
+
+def ridge_aggregation_multi(
+    positions: list[pd.Series],
+    ret: pd.Series,
+    vol_ewm_span: int = 30,
+    is_intraday_hourly: bool = False,
+    train_fraction: float = 0.5,
+    min_samples: int = 10,
+) -> tuple[np.ndarray, list[np.ndarray], tuple[str, ...]]:
+    """
+    Combine N position series using Ridge regression on forward vol-normalized returns.
+
+    Same logic as ridge_aggregation but accepts arbitrary number of position series.
+
+    Returns:
+        beta_reg: Average of 4 horizon betas, shape (N,).
+        betas: List of 4 coefficient arrays, one per horizon.
+        horizon_labels: Tuple of 4 strings for display.
+    """
+    n = len(positions)
+    if n == 0:
+        raise ValueError("positions must not be empty")
+    default_beta = np.ones(n) / n
+    if RidgeCV is None:
+        if is_intraday_hourly:
+            return default_beta, [default_beta] * 4, RIDGE_LABELS_HOURLY
+        return default_beta, [default_beta] * 4, RIDGE_LABELS_DAILY
+
+    vol_ret = ret.ewm(span=vol_ewm_span, adjust=False).std().clip(lower=VOL_FLOOR)
+    X = np.column_stack([p.values for p in positions])
+
+    if is_intraday_hourly:
+        horizons = RIDGE_HORIZONS_HOURLY
+        labels = RIDGE_LABELS_HOURLY
+    else:
+        horizons = RIDGE_HORIZONS_DAILY
+        labels = RIDGE_LABELS_DAILY
+
+    betas = []
+    for horizon in horizons:
+        fwd_ret = ret.rolling(horizon).sum().shift(-horizon)
+        vol_h = vol_ret * np.sqrt(horizon)
+        y_h = (fwd_ret / vol_h).replace([np.inf, -np.inf], np.nan).values
+        valid = ~(np.isnan(X).any(axis=1) | np.isnan(y_h))
+        X_v, y_v = X[valid], y_h[valid]
+        if X_v.shape[0] > min_samples:
+            split_idx = int(X_v.shape[0] * train_fraction)
+            X_train, y_train = X_v[:split_idx], y_v[:split_idx]
+            ridge = RidgeCV(cv=5, alphas=np.logspace(-6, 6, 13))
+            ridge.fit(X_train, y_train)
+            betas.append(ridge.coef_)
+        else:
+            betas.append(default_beta)
+
+    beta_reg = np.mean(betas, axis=0)
+    return beta_reg, betas, labels
+
+
+def pls_aggregation_multi(
+    positions: list[pd.Series],
+    ret: pd.Series,
+    vol_ewm_span: int = 30,
+    is_intraday_hourly: bool = False,
+    train_fraction: float = 0.5,
+    min_samples: int = 10,
+    n_components: int | None = None,
+) -> tuple[np.ndarray, list[np.ndarray], tuple[str, ...]]:
+    """
+    Combine N position series using PLS regression on forward vol-normalized returns.
+    Same structure as ridge_aggregation_multi: 4 horizons, train on first fraction, average betas.
+
+    Returns:
+        beta_pls: Average of 4 horizon coefficient arrays, shape (N,).
+        betas: List of 4 coefficient arrays, one per horizon.
+        horizon_labels: Tuple of 4 strings for display.
+    """
+    n = len(positions)
+    if n == 0:
+        raise ValueError("positions must not be empty")
+    default_beta = np.ones(n) / n
+    if PLSRegression is None:
+        if is_intraday_hourly:
+            return default_beta, [default_beta] * 4, RIDGE_LABELS_HOURLY
+        return default_beta, [default_beta] * 4, RIDGE_LABELS_DAILY
+
+    vol_ret = ret.ewm(span=vol_ewm_span, adjust=False).std().clip(lower=VOL_FLOOR)
+    X = np.column_stack([p.values for p in positions])
+
+    if is_intraday_hourly:
+        horizons = RIDGE_HORIZONS_HOURLY
+        labels = RIDGE_LABELS_HOURLY
+    else:
+        horizons = RIDGE_HORIZONS_DAILY
+        labels = RIDGE_LABELS_DAILY
+
+    n_comp = n_components if n_components is not None else min(10, n - 1, 50)
+    n_comp = max(1, min(n_comp, n - 1))
+
+    betas = []
+    for horizon in horizons:
+        fwd_ret = ret.rolling(horizon).sum().shift(-horizon)
+        vol_h = vol_ret * np.sqrt(horizon)
+        y_h = (fwd_ret / vol_h).replace([np.inf, -np.inf], np.nan).values
+        valid = ~(np.isnan(X).any(axis=1) | np.isnan(y_h))
+        X_v, y_v = X[valid], y_h[valid]
+        if X_v.shape[0] > min_samples:
+            split_idx = int(X_v.shape[0] * train_fraction)
+            X_train, y_train = X_v[:split_idx], y_v[:split_idx]
+            pls = PLSRegression(n_components=n_comp)
+            pls.fit(X_train, y_train)
+            betas.append(pls.coef_.ravel())
+        else:
+            betas.append(default_beta)
+
+    beta_pls = np.mean(betas, axis=0)
+    return beta_pls, betas, labels
 
 
 # ============================================================================
@@ -422,11 +545,11 @@ def profit_factor(pnl: pd.Series) -> float:
 def annual_turnover(position: pd.Series, is_intraday: bool = False) -> float:
     """
     Calculate annual turnover.
-    
+
     Args:
         position: Position series
         is_intraday: If True, uses hourly scaling; if False, uses daily scaling
-    
+
     Returns:
         Annual turnover
     """
@@ -434,6 +557,85 @@ def annual_turnover(position: pd.Series, is_intraday: bool = False) -> float:
         return float(position.diff().abs().mean()) * TRADING_HOURS_PER_YEAR
     else:
         return float(position.diff().abs().mean()) * TRADING_DAYS
+
+
+def buffer_position(
+    position: pd.Series,
+    factor: float = 5.0,
+) -> pd.Series:
+    """
+    Buffer position: only update when the gap between target and buffered exceeds a threshold.
+    The decision is based on (target - true position), not on step changes in target.
+
+    - Gap = target[t] - buffered[t-1]. When we do not update, buffered stays fixed so the gap
+      can accumulate as the target moves in later steps.
+    - Threshold = factor × mean(|Δposition|). We update (set buffered[t] = target[t]) only when
+      |gap| > threshold. Using average absolute change ties the rule to typical step size,
+      so buffering has a visible effect on turnover.
+
+    Args:
+        position: Target position series
+        factor: Threshold = factor × mean(|position.diff()|) (default 2.0)
+
+    Returns:
+        Buffered position series (same index as position)
+    """
+    arr = np.asarray(position, dtype=float)
+    abs_changes = np.abs(np.diff(arr))
+    avg_abs_change = np.nanmean(abs_changes)
+    print(f"[buffer_position] avg_abs_change={avg_abs_change}")
+    if avg_abs_change <= 0 or not np.isfinite(avg_abs_change):
+        print("[buffer_position] early return: avg_abs_change <= 0 or not finite, returning position unchanged")
+        return pd.Series(arr, index=position.index)
+    threshold = float(factor * avg_abs_change)
+    out = arr.copy()
+    for i in range(1, len(out)):
+        if np.abs(arr[i] - out[i - 1]) <= threshold:
+            out[i] = out[i - 1]
+    return pd.Series(out, index=position.index)
+
+
+def cost_metrics(
+    ann_turnover: float,
+    ann_vol_pct: float,
+    sharpe: float,
+    trading_days: int = TRADING_DAYS,
+    cost_bps_per_trip: float = COST_BPS_PER_TRIP,
+) -> dict:
+    """
+    Cost-adjusted metrics from turnover and vol/sharpe.
+
+    - Holding period (days) = days_in_year / ann_turnover
+    - Ann trading cost (%) = ann_turnover * (cost_bps_per_trip / 10000) * 100
+    - Cost/vol = ann_cost_pct / ann_vol_pct
+    - Net Sharpe = sharpe - cost_to_vol
+
+    Args:
+        ann_turnover: Annual turnover
+        ann_vol_pct: Annualized vol in % (e.g. 20 for 20%)
+        sharpe: Raw Sharpe ratio
+        trading_days: Days per year (default TRADING_DAYS)
+        cost_bps_per_trip: Cost in bps per round-trip (default 15)
+
+    Returns:
+        Dict with "Holding period (days)", "Ann cost (%)", "Cost/vol", "Net Sharpe"
+    """
+    if ann_turnover and ann_turnover > 0:
+        holding_period_days = trading_days / ann_turnover
+        ann_cost_pct = ann_turnover * (cost_bps_per_trip / 10000) * 100
+    else:
+        holding_period_days = np.nan
+        ann_cost_pct = 0.0
+    cost_to_vol = ann_cost_pct / ann_vol_pct if (ann_vol_pct and ann_vol_pct > 0) else np.nan
+    net_sharpe = (float(sharpe) - cost_to_vol) if not np.isnan(sharpe) and not np.isnan(cost_to_vol) else np.nan
+    if np.isnan(net_sharpe) and not np.isnan(sharpe) and (not ann_vol_pct or ann_vol_pct <= 0):
+        net_sharpe = float(sharpe)
+    return {
+        "Holding period (days)": holding_period_days,
+        "Ann cost (%)": ann_cost_pct,
+        "Cost/vol": cost_to_vol if not np.isnan(cost_to_vol) else 0.0,
+        "Net Sharpe": net_sharpe,
+    }
 
 
 # ============================================================================

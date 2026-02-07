@@ -25,6 +25,7 @@ from viz.backtest_utils import (
     build_stats,
     alpha_beta,
     annual_turnover,
+    cost_metrics,
 )
 
 TIMEFRAME_5M = "5m"
@@ -178,11 +179,16 @@ alpha1, beta1 = alpha_beta(pnl1, ret)
 alpha2, beta2 = alpha_beta(pnl2, ret)
 alpha3, beta3 = alpha_beta(pnl3, ret)
 
-# Annual turnover: raw = 0 (buy-and-hold), strategy = mean |d position| * 252
+# Annual turnover: raw = 0 (buy-and-hold), strategy = mean |d position| * TRADING_DAYS
 turnover_raw = 0.0
 turnover1 = annual_turnover(pos1)
 turnover2 = annual_turnover(pos2)
 turnover3 = annual_turnover(pos3)
+
+cm_raw = cost_metrics(turnover_raw, stats_raw["Ann vol (%)"], stats_raw["Sharpe"])
+cm1 = cost_metrics(turnover1, stats1["Ann vol (%)"], stats1["Sharpe"])
+cm2 = cost_metrics(turnover2, stats2["Ann vol (%)"], stats2["Sharpe"])
+cm3 = cost_metrics(turnover3, stats3["Ann vol (%)"], stats3["Sharpe"])
 
 rows_table = [
     ("Ann return (%)", stats_raw["Ann return (%)"], stats1["Ann return (%)"], stats2["Ann return (%)"], stats3["Ann return (%)"]),
@@ -194,6 +200,10 @@ rows_table = [
     ("Skewness", stats_raw["Skewness"], stats1["Skewness"], stats2["Skewness"], stats3["Skewness"]),
     ("ES95 (%)", stats_raw["ES95 (%)"], stats1["ES95 (%)"], stats2["ES95 (%)"], stats3["ES95 (%)"]),
     ("Ann turnover", turnover_raw, turnover1, turnover2, turnover3),
+    ("Holding period (days)", cm_raw["Holding period (days)"], cm1["Holding period (days)"], cm2["Holding period (days)"], cm3["Holding period (days)"]),
+    ("Ann cost (%)", cm_raw["Ann cost (%)"], cm1["Ann cost (%)"], cm2["Ann cost (%)"], cm3["Ann cost (%)"]),
+    ("Cost/vol", cm_raw["Cost/vol"], cm1["Cost/vol"], cm2["Cost/vol"], cm3["Cost/vol"]),
+    ("Net Sharpe", cm_raw["Net Sharpe"], cm1["Net Sharpe"], cm2["Net Sharpe"], cm3["Net Sharpe"]),
     ("Alpha vs raw (ann %)", np.nan, alpha1 * 100 if not np.isnan(alpha1) else np.nan, alpha2 * 100 if not np.isnan(alpha2) else np.nan, alpha3 * 100 if not np.isnan(alpha3) else np.nan),
     ("Beta vs raw", np.nan, beta1, beta2, beta3),
 ]

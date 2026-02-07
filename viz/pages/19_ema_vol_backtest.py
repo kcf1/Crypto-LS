@@ -29,6 +29,7 @@ from viz.backtest_utils import (
     alpha_beta,
     annual_turnover,
     ridge_aggregation,
+    cost_metrics,
 )
 
 TIMEFRAME_5M = "5m"
@@ -322,6 +323,13 @@ turnover3 = annual_turnover(pos3, is_intraday=True)
 turnover_avg = annual_turnover(pos_avg, is_intraday=True)
 turnover_reg = annual_turnover(pos_reg, is_intraday=True)
 
+cm_raw = cost_metrics(turnover_raw, stats_raw["Ann vol (%)"], stats_raw["Sharpe"])
+cm1 = cost_metrics(turnover1, stats1["Ann vol (%)"], stats1["Sharpe"])
+cm2 = cost_metrics(turnover2, stats2["Ann vol (%)"], stats2["Sharpe"])
+cm3 = cost_metrics(turnover3, stats3["Ann vol (%)"], stats3["Sharpe"])
+cm_avg = cost_metrics(turnover_avg, stats_avg["Ann vol (%)"], stats_avg["Sharpe"])
+cm_reg = cost_metrics(turnover_reg, stats_reg["Ann vol (%)"], stats_reg["Sharpe"])
+
 rows_table = [
     ("Ann return (%)", stats_raw["Ann return (%)"], stats1["Ann return (%)"], stats2["Ann return (%)"], stats3["Ann return (%)"], stats_avg["Ann return (%)"], stats_reg["Ann return (%)"]),
     ("Ann vol (%)", stats_raw["Ann vol (%)"], stats1["Ann vol (%)"], stats2["Ann vol (%)"], stats3["Ann vol (%)"], stats_avg["Ann vol (%)"], stats_reg["Ann vol (%)"]),
@@ -337,6 +345,10 @@ rows_table = [
     ("Hit Rate (%)", stats_raw["Hit Rate (%)"], stats1["Hit Rate (%)"], stats2["Hit Rate (%)"], stats3["Hit Rate (%)"], stats_avg["Hit Rate (%)"], stats_reg["Hit Rate (%)"]),
     ("Profit Factor", stats_raw["Profit Factor"], stats1["Profit Factor"], stats2["Profit Factor"], stats3["Profit Factor"], stats_avg["Profit Factor"], stats_reg["Profit Factor"]),
     ("Ann turnover", turnover_raw, turnover1, turnover2, turnover3, turnover_avg, turnover_reg),
+    ("Holding period (days)", cm_raw["Holding period (days)"], cm1["Holding period (days)"], cm2["Holding period (days)"], cm3["Holding period (days)"], cm_avg["Holding period (days)"], cm_reg["Holding period (days)"]),
+    ("Ann cost (%)", cm_raw["Ann cost (%)"], cm1["Ann cost (%)"], cm2["Ann cost (%)"], cm3["Ann cost (%)"], cm_avg["Ann cost (%)"], cm_reg["Ann cost (%)"]),
+    ("Cost/vol", cm_raw["Cost/vol"], cm1["Cost/vol"], cm2["Cost/vol"], cm3["Cost/vol"], cm_avg["Cost/vol"], cm_reg["Cost/vol"]),
+    ("Net Sharpe", cm_raw["Net Sharpe"], cm1["Net Sharpe"], cm2["Net Sharpe"], cm3["Net Sharpe"], cm_avg["Net Sharpe"], cm_reg["Net Sharpe"]),
     ("Alpha vs raw (ann %)", np.nan, alpha1 * 100 if not np.isnan(alpha1) else np.nan, alpha2 * 100 if not np.isnan(alpha2) else np.nan, alpha3 * 100 if not np.isnan(alpha3) else np.nan, alpha_avg * 100 if not np.isnan(alpha_avg) else np.nan, alpha_reg * 100 if not np.isnan(alpha_reg) else np.nan),
     ("Beta vs raw", np.nan, beta1, beta2, beta3, beta_avg, beta_reg_out),
 ]

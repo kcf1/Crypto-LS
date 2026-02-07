@@ -57,11 +57,12 @@ from viz.backtest_utils import (
     build_stats,
     alpha_beta,
     annual_turnover,
+    cost_metrics,
 )
 
 # Constants (if page-specific, otherwise use from utils)
 TIMEFRAME_5M = "5m"
-# Note: TRADING_DAYS, TRADING_HOURS_PER_YEAR, VOL_FLOOR are imported from viz.backtest_utils
+# Note: TRADING_DAYS=360 (crypto 24/7), TRADING_HOURS_PER_YEAR=8640, VOL_FLOOR from viz.backtest_utils
 # Use TRADING_DAYS for annualization in statistics (after resampling to daily)
 # Use TRADING_HOURS_PER_YEAR only for intraday position sizing and volatility calculations
 
@@ -330,6 +331,8 @@ pnl_reg = pnl_reg.fillna(0)
 
 For captions, use `horizon_labels` (e.g. `f"Reg: 4 models ({'/'.join(horizon_labels)} fwd ret/vol)"`).
 
+**Many series (e.g. combined strategies):** Use `ridge_aggregation_multi(positions, ret, ...)` or `pls_aggregation_multi(positions, ret, ...)` from `viz.backtest_utils`. Same 4 horizons and train fraction; PLS uses `n_components` (default `min(10, n-1)`). Both return `(beta, betas, horizon_labels)`; combine with `pos = sum(beta[i] * positions[i] for i in range(len(positions)))`.
+
 ---
 
 ## Step 6: Rescale to Target Volatility
@@ -446,7 +449,7 @@ This function automatically:
 - For EOD (end-of-day) data, the function will skip resampling automatically
 - For intraday data (5m aggregated to hourly, or any sub-daily frequency), always use this function
 - The resampling sums PnL within each day (not averaging), as PnL is additive
-- Statistics are then calculated on daily PnL and annualized using `TRADING_DAYS = 252`
+- Statistics are then calculated on daily PnL and annualized using `TRADING_DAYS = 360` (crypto 24/7)
 
 ### 9.1 Helper Functions
 
@@ -456,6 +459,8 @@ This function automatically:
 - `build_stats()` - Main statistics builder (supports full and simplified metrics)
 - `alpha_beta()` - Calculate alpha and beta vs benchmark
 - `annual_turnover()` - Calculate annual turnover
+- `cost_metrics(ann_turnover, ann_vol_pct, sharpe)` - Holding period (days), Ann cost (%), Cost/vol, Net Sharpe (15 bps per trip assumed)
+- `buffer_position(position, factor=2.0)` - Buffered position: only updates when gap > factor × mean(|Δposition|) (default factor 2; affects turnover)
 - `max_drawdown()`, `avg_drawdown()`, `cvar95()`, `cdd95()`, `kurtosis_monthly()`, `sortino_ratio()`, `hit_rate()`, `profit_factor()` - Individual metric functions
 
 **Usage**:
@@ -522,6 +527,14 @@ turnover_reg = annual_turnover(pos_reg, is_intraday=False)
 # turnover1 = annual_turnover(pos1, is_intraday=True)
 # ... etc
 
+# Cost-adjusted metrics (add cost_metrics to backtest_utils imports): holding period, ann cost, cost/vol, net sharpe (15 bps per trip)
+cm_raw = cost_metrics(turnover_raw, stats_raw["Ann vol (%)"], stats_raw["Sharpe"])
+cm1 = cost_metrics(turnover1, stats1["Ann vol (%)"], stats1["Sharpe"])
+cm2 = cost_metrics(turnover2, stats2["Ann vol (%)"], stats2["Sharpe"])
+cm3 = cost_metrics(turnover3, stats3["Ann vol (%)"], stats3["Sharpe"])
+cm_avg = cost_metrics(turnover_avg, stats_avg["Ann vol (%)"], stats_avg["Sharpe"])
+cm_reg = cost_metrics(turnover_reg, stats_reg["Ann vol (%)"], stats_reg["Sharpe"])
+
 rows_table = [
     ("Ann return (%)", stats_raw["Ann return (%)"], stats1["Ann return (%)"], stats2["Ann return (%)"], stats3["Ann return (%)"], stats_avg["Ann return (%)"], stats_reg["Ann return (%)"]),
     ("Ann vol (%)", stats_raw["Ann vol (%)"], stats1["Ann vol (%)"], stats2["Ann vol (%)"], stats3["Ann vol (%)"], stats_avg["Ann vol (%)"], stats_reg["Ann vol (%)"]),
@@ -537,6 +550,11 @@ rows_table = [
     ("Hit Rate (%)", stats_raw["Hit Rate (%)"], stats1["Hit Rate (%)"], stats2["Hit Rate (%)"], stats3["Hit Rate (%)"], stats_avg["Hit Rate (%)"], stats_reg["Hit Rate (%)"]),
     ("Profit Factor", stats_raw["Profit Factor"], stats1["Profit Factor"], stats2["Profit Factor"], stats3["Profit Factor"], stats_avg["Profit Factor"], stats_reg["Profit Factor"]),
     ("Ann turnover", turnover_raw, turnover1, turnover2, turnover3, turnover_avg, turnover_reg),
+    # Cost-adjusted metrics (holding period = days_in_year/turnover; 15 bps per trip; net sharpe = sharpe - cost/vol)
+    ("Holding period (days)", cm_raw["Holding period (days)"], cm1["Holding period (days)"], cm2["Holding period (days)"], cm3["Holding period (days)"], cm_avg["Holding period (days)"], cm_reg["Holding period (days)"]),
+    ("Ann cost (%)", cm_raw["Ann cost (%)"], cm1["Ann cost (%)"], cm2["Ann cost (%)"], cm3["Ann cost (%)"], cm_avg["Ann cost (%)"], cm_reg["Ann cost (%)"]),
+    ("Cost/vol", cm_raw["Cost/vol"], cm1["Cost/vol"], cm2["Cost/vol"], cm3["Cost/vol"], cm_avg["Cost/vol"], cm_reg["Cost/vol"]),
+    ("Net Sharpe", cm_raw["Net Sharpe"], cm1["Net Sharpe"], cm2["Net Sharpe"], cm3["Net Sharpe"], cm_avg["Net Sharpe"], cm_reg["Net Sharpe"]),
     ("Alpha vs raw (ann %)", np.nan, alpha1 * 100 if not np.isnan(alpha1) else np.nan, alpha2 * 100 if not np.isnan(alpha2) else np.nan, alpha3 * 100 if not np.isnan(alpha3) else np.nan, alpha_avg * 100 if not np.isnan(alpha_avg) else np.nan, alpha_reg * 100 if not np.isnan(alpha_reg) else np.nan),
     ("Beta vs raw", np.nan, beta1, beta2, beta3, beta_avg, beta_reg_out),
 ]
